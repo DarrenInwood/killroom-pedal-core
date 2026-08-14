@@ -23,7 +23,7 @@ PlatformIO's library dependency finder picks it up from there via
 | `pedal_core/display.*` | protocol driver | SSD1309 / SSD1306 / ST7567 framebuffer driver with pixel-precise text, gauges, `invert_region`, slide composition |
 | `pedal_core/sysex_codec.hpp` | pure header | Roland-style 7-bit SysEx packing and CRC32 — the firmware-update codec |
 | `pedal_core/dfu_protocol.hpp` | pure header | The DFU-over-SysEx wire contract: command bytes and status codes |
-| `pedal_core/dfu_session.hpp` | pure header | The DFU write session — chunk decode, bounds checks, erase/write sequencing, image verify — with flash behind a two-function seam |
+| `pedal_core/dfu_session.hpp` | pure header | The DFU write session — chunk decode, bounds checks, erase/write sequencing, image verify — with flash behind a three-function seam |
 | `pedal_core/app_image.hpp` | pure header | Boot-time application-image validation: descriptor magic, size, CRC32 trailer |
 | `pedal_core/dfu_progress.hpp` | pure header | Upload percentage and its display string |
 
