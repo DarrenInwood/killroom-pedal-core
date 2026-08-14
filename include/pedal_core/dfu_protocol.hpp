@@ -19,9 +19,13 @@
 //   percentage. Also resets the write session, so resending it starts a clean
 //   retry after a failure:
 //     F0 <mfr> <dev> 05 [size4, 7-bit packed as 5 bytes] F7
-//   Firmware chunk:
-//     F0 <mfr> <dev> 02 [addr3 addr2 addr1 addr0] [len_hi len_lo]
-//                       [7-bit packed data] F7
+//   Firmware chunk. The address is four 7-bit groups (28 bits, which reaches
+//   any flash address these parts have) and the length is the ENCODED payload
+//   length in two 7-bit groups. Seven-bit groups throughout, because every
+//   byte between F0 and F7 must be <= 0x7F -- a raw 8-bit address byte of 0x80
+//   or above is a MIDI status byte and aborts the frame:
+//     F0 <mfr> <dev> 02 [a27..21 a20..14 a13..7 a6..0]
+//                       [enc_len_hi7 enc_len_lo7] [7-bit packed data] F7
 //   End of firmware — CRC32 over the whole image:
 //     F0 <mfr> <dev> 03 [crc4, 7-bit packed] F7
 //   Status, from the bootloader after every command:
@@ -31,8 +35,11 @@ namespace dfu_protocol {
 inline constexpr uint8_t CMD_ENTER_BOOTLOADER = 0x01u;
 inline constexpr uint8_t CMD_FW_CHUNK         = 0x02u;
 inline constexpr uint8_t CMD_FW_END           = 0x03u;
-inline constexpr uint8_t CMD_FW_STATUS        = 0x7Eu;
 inline constexpr uint8_t CMD_FW_BEGIN         = 0x05u;
+// The status reply's command byte. A product whose own MIDI header also
+// defines a status command must use this value: it is what the bootloaders
+// emit and what the host updater matches on.
+inline constexpr uint8_t CMD_FW_STATUS        = 0x7Eu;
 
 enum class Status : uint8_t {
     Ack      = 0x00u,   // chunk accepted and written
@@ -42,7 +49,9 @@ enum class Status : uint8_t {
 };
 
 // The address a status frame reports back: for a chunk, where the next byte is
-// expected — which is what lets a host resume rather than restart.
-inline constexpr uint8_t STATUS_FRAME_LEN = 11u;   // F0 mfr dev 7E st a3 a2 a1 a0 .. F7
+// expected — which is what lets a host resume rather than restart. It is packed
+// as four 7-bit groups, like the chunk address it answers.
+//   F0 mfr dev 7E status a27..21 a20..14 a13..7 a6..0 F7
+inline constexpr uint8_t STATUS_FRAME_LEN = 10u;
 
 }  // namespace dfu_protocol
