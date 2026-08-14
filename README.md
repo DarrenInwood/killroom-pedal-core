@@ -21,6 +21,11 @@ PlatformIO's library dependency finder picks it up from there via
 | `pedal_core/font.hpp` + `font_data.*` | header + data | The family's variable-width OLED fonts; regenerate with [tools/gen_fonts.py](tools/gen_fonts.py) |
 | `pedal_core/eeprom.*` | protocol driver | 25xx256: page-bounded writes, boot health probe, RAM-mirror fallback |
 | `pedal_core/display.*` | protocol driver | SSD1309 / SSD1306 / ST7567 framebuffer driver with pixel-precise text, gauges, `invert_region`, slide composition |
+| `pedal_core/sysex_codec.hpp` | pure header | Roland-style 7-bit SysEx packing and CRC32 — the firmware-update codec |
+| `pedal_core/dfu_protocol.hpp` | pure header | The DFU-over-SysEx wire contract: command bytes and status codes |
+| `pedal_core/dfu_session.hpp` | pure header | The DFU write session — chunk decode, bounds checks, erase/write sequencing, image verify — with flash behind a two-function seam |
+| `pedal_core/app_image.hpp` | pure header | Boot-time application-image validation: descriptor magic, size, CRC32 trailer |
+| `pedal_core/dfu_progress.hpp` | pure header | Upload percentage and its display string |
 
 ## The porting contract
 
@@ -44,3 +49,10 @@ pio test -e native
 Unit tests for library modules live here, not in the consumers. The two
 protocol drivers are tested by compiling the real `.cpp` into the test TU
 behind recording stubs — see `test/test_eeprom` for the pattern.
+
+`test/test_dfu_session` is worth singling out: the decode-and-bounds logic it
+covers is what bricks a pedal when it is wrong, and in the firmware it was
+extracted from it lived inside a bootloader `main.cpp` bound to CMSIS, TinyUSB
+and a real flash controller, where none of it could run on a host. The
+`FlashOps` seam — including `mapped()`, so an address is never assumed to be a
+pointer — is what makes every rejection path testable.
