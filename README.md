@@ -27,6 +27,11 @@ PlatformIO's library dependency finder picks it up from there via
 | `pedal_core/app_image.hpp` | pure header | Boot-time application-image validation: descriptor magic, size, CRC32 trailer |
 | `pedal_core/dfu_progress.hpp` | pure header | Upload percentage and its display string |
 
+## Migrating an existing pedal onto this
+
+[MIGRATION.md](MIGRATION.md) — the per-file inventory, the polarity traps in the
+hardware seam, which tests to delete, and the order of work.
+
 ## The porting contract
 
 Nothing in `src/` touches a register. Hardware is reached only through
