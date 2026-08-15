@@ -14,6 +14,41 @@ namespace sysex_codec {
 // 7-bit SysEx decoding (Roland-style packing)
 // 8 sysex bytes → 7 binary bytes
 // ---------------------------------------------------------------------------
+// The packing direction, for a frame the pedal SENDS rather than receives.
+//
+// The bootloader only ever decodes, which is why this arrived later than its
+// inverse: the application needs it to put binary on the wire — the UID reply
+// carries a 96-bit MCU serial that has no 7-bit-safe form otherwise.
+//
+// Each group of up to 7 binary bytes becomes a leading MSB byte followed by the
+// low 7 bits of each, where bit j of the MSB byte is bit 7 of input byte j.
+// Returns the encoded length, or 0 if `out_cap` could not hold it — a partial
+// encode would put a frame on the wire that decodes to something else.
+inline uint16_t encode_7bit(const uint8_t* in, uint8_t* out, uint16_t in_len, uint16_t out_cap)
+{
+    const uint16_t groups = (uint16_t)((in_len + 6u) / 7u);
+    const uint16_t needed = (uint16_t)(in_len + groups);
+    if (needed > out_cap) return 0u;
+
+    uint16_t o = 0u;
+    for (uint16_t i = 0; i < in_len; i += 7u) {
+        const uint16_t left = (uint16_t)(in_len - i);
+        const uint16_t n = (left < 7u) ? left : (uint16_t)7u;
+        uint8_t msbs = 0u;
+        for (uint16_t j = 0; j < n; ++j)
+            if (in[i + j] & 0x80u) msbs = (uint8_t)(msbs | (uint8_t)(1u << j));
+        out[o++] = msbs;
+        for (uint16_t j = 0; j < n; ++j) out[o++] = (uint8_t)(in[i + j] & 0x7Fu);
+    }
+    return o;
+}
+
+// The encoded length `encode_7bit` produces for `in_len` binary bytes.
+constexpr uint16_t encoded_size(uint16_t in_len)
+{
+    return (uint16_t)(in_len + (uint16_t)((in_len + 6u) / 7u));
+}
+
 inline uint16_t decode_7bit(const uint8_t* in, uint8_t* out, uint16_t in_len, uint16_t out_cap)
 {
     uint16_t out_len = 0;

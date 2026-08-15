@@ -134,6 +134,63 @@ void test_crc32_detects_single_bit_flip(void) {
     TEST_ASSERT_NOT_EQUAL(a, b);
 }
 
+
+// --- encode_7bit -----------------------------------------------------------
+
+void test_encode_leads_each_group_with_its_high_bits(void) {
+    const uint8_t in[7] = {0x80, 0x01, 0xFF, 0x00, 0x00, 0x00, 0x00};
+    uint8_t out[8] = {};
+    const uint16_t n = sysex_codec::encode_7bit(in, out, sizeof(in), sizeof(out));
+    TEST_ASSERT_EQUAL_UINT16(8, n);
+    TEST_ASSERT_EQUAL_HEX8(0x05, out[0]);   // bits 0 and 2 -> bytes 0 and 2 were high
+    TEST_ASSERT_EQUAL_HEX8(0x00, out[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x01, out[2]);
+    TEST_ASSERT_EQUAL_HEX8(0x7F, out[3]);
+}
+
+void test_encode_keeps_every_byte_sysex_safe(void) {
+    uint8_t in[64] = {};
+    for (uint16_t i = 0; i < sizeof(in); ++i) in[i] = (uint8_t)(i * 7u);
+    uint8_t out[128] = {};
+    const uint16_t n = sysex_codec::encode_7bit(in, out, sizeof(in), sizeof(out));
+    for (uint16_t i = 0; i < n; ++i) TEST_ASSERT_EQUAL_HEX8(0, out[i] & 0x80u);
+}
+
+void test_encode_round_trips_through_decode_at_every_length(void) {
+    for (uint16_t len = 0; len <= 32u; ++len) {
+        uint8_t in[32] = {};
+        for (uint16_t i = 0; i < len; ++i) in[i] = (uint8_t)(i * 37u + 11u);
+        uint8_t enc[64] = {};
+        uint8_t dec[32] = {};
+        const uint16_t n = sysex_codec::encode_7bit(in, enc, len, sizeof(enc));
+        TEST_ASSERT_EQUAL_UINT16(sysex_codec::encoded_size(len), n);
+        const uint16_t m = sysex_codec::decode_7bit(enc, dec, n, sizeof(dec));
+        TEST_ASSERT_EQUAL_UINT16(len, m);
+        for (uint16_t i = 0; i < len; ++i) TEST_ASSERT_EQUAL_HEX8(in[i], dec[i]);
+    }
+}
+
+void test_encode_packs_a_96_bit_uid_into_14_bytes(void) {
+    uint8_t uid[12] = {};
+    for (uint8_t i = 0; i < sizeof(uid); ++i) uid[i] = (uint8_t)(0x11u * (i + 1u));
+    uint8_t out[16] = {};
+    TEST_ASSERT_EQUAL_UINT16(14, sysex_codec::encode_7bit(uid, out, sizeof(uid), sizeof(out)));
+    TEST_ASSERT_EQUAL_UINT16(14, sysex_codec::encoded_size(12));
+}
+
+void test_encode_refuses_rather_than_truncating(void) {
+    // A partial encode would decode to something else entirely, so a short
+    // buffer must produce nothing at all.
+    const uint8_t in[7] = {1, 2, 3, 4, 5, 6, 7};
+    uint8_t out[4] = {};
+    TEST_ASSERT_EQUAL_UINT16(0, sysex_codec::encode_7bit(in, out, sizeof(in), sizeof(out)));
+}
+
+void test_encode_empty_input_is_empty(void) {
+    uint8_t out[4] = {};
+    TEST_ASSERT_EQUAL_UINT16(0, sysex_codec::encode_7bit(nullptr, out, 0u, sizeof(out)));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_decode_full_group_no_high_bits);
@@ -148,5 +205,11 @@ int main(int, char**) {
     RUN_TEST(test_crc32_standard_check_value);
     RUN_TEST(test_crc32_empty_is_zero);
     RUN_TEST(test_crc32_detects_single_bit_flip);
+    RUN_TEST(test_encode_leads_each_group_with_its_high_bits);
+    RUN_TEST(test_encode_keeps_every_byte_sysex_safe);
+    RUN_TEST(test_encode_round_trips_through_decode_at_every_length);
+    RUN_TEST(test_encode_packs_a_96_bit_uid_into_14_bytes);
+    RUN_TEST(test_encode_refuses_rather_than_truncating);
+    RUN_TEST(test_encode_empty_input_is_empty);
     return UNITY_END();
 }
