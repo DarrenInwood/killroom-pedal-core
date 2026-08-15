@@ -80,6 +80,11 @@ namespace pedal_core::hal {
     void panel_led_pins_init();
     void panel_led(uint8_t idx, bool on);
 
+    // The bypass relay: engaged = effect in the signal path. Pin bring-up
+    // leaves it disengaged (true bypass).
+    void bypass_pins_init();
+    void bypass_relay(bool engaged);
+
     // The external-input jack, for products that have one (the library module
     // is compiled only where pedal_core_extinput_config.hpp exists).
     // footswitch_mode true = both contacts as active-low switch inputs;
