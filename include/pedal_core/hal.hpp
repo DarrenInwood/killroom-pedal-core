@@ -71,4 +71,20 @@ namespace pedal_core::hal {
     // already configured them implements it as a forward or a no-op.
     void footswitch_pins_init();
     bool fs_pressed(uint8_t idx);
+
+    // Panel LEDs, logical `on`. Index 0 is the status/bypass LED; index 1 is
+    // the product's second LED (a tempo LED, a boost LED — its business).
+    // panel_led_pins_init() configures them as outputs and leaves them off;
+    // any careful no-glitch sequencing an LED's polarity needs lives in the
+    // product's implementation.
+    void panel_led_pins_init();
+    void panel_led(uint8_t idx, bool on);
+
+    // The external-input jack, for products that have one (the library module
+    // is compiled only where pedal_core_extinput_config.hpp exists).
+    // footswitch_mode true = both contacts as active-low switch inputs;
+    // false = the product's expression wiring (reference out + analog return).
+    void ext_input_pins_mode(bool footswitch_mode);
+    bool ext_tip_pressed();
+    bool ext_ring_pressed();
 }
