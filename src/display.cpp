@@ -329,14 +329,28 @@ void display::draw_text(uint8_t x, uint8_t page, const char* str)
 // at a time at an arbitrary y, so text can sit on any pixel row rather than the
 // 8-pixel page grid.
 // ---------------------------------------------------------------------------
+// A character's place in the font, with anything outside it substituted by '?'.
+//
+// The comparison is deliberately unsigned and widened. `first + count` reaches
+// 128 and beyond, and `char` is signed on any host and unsigned on ARM — so
+// comparing a char against `(char)(first + count)` compares it against a
+// negative number on the host, which is true for every character and turns all
+// text into question marks. The library builds for both, so neither may depend
+// on the sign of a plain char.
+static uint8_t glyph_index(const display::Font& f, char c)
+{
+    uint16_t code = (uint8_t)c;
+    if (code < f.first || code >= (uint16_t)f.first + f.count) code = (uint8_t)'?';
+    return (uint8_t)(code - f.first);
+}
+
 // Blit one glyph, clipping any column at or beyond x_max (so a string can be cut
 // mid-letter at an exact pixel). `ink` sets the glyph's pixels; !ink clears them
 // (inverted text over a filled background). Returns x + the glyph's pen advance.
 static uint8_t blit_glyph(const display::Font& f, uint8_t x, uint8_t y, char c,
                           uint8_t x_max, bool ink)
 {
-    if (c < (char)f.first || c >= (char)(f.first + f.count)) c = '?';
-    const uint8_t  idx = (uint8_t)c - f.first;
+    const uint8_t  idx = glyph_index(f, c);
     const uint8_t  w   = f.widths[idx];
     const uint8_t  bpc = (uint8_t)((f.height + 7u) / 8u);  // bytes per column
     const uint8_t* col = f.bitmap + f.offsets[idx];
@@ -378,11 +392,7 @@ void display::draw_text_clipped(const Font& f, uint8_t x, uint8_t y, const char*
 uint8_t display::text_width(const Font& f, const char* str)
 {
     uint16_t w = 0;
-    for (const char* p = str; *p; ++p) {
-        char c = *p;
-        if (c < (char)f.first || c >= (char)(f.first + f.count)) c = '?';
-        w += f.advances[(uint8_t)c - f.first];
-    }
+    for (const char* p = str; *p; ++p) w += f.advances[glyph_index(f, *p)];
     return (uint8_t)w;
 }
 

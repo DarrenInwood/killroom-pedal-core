@@ -130,6 +130,53 @@ void test_var_font_glyph_and_width(void) {
     TEST_ASSERT_FALSE(s_fb[0][1] & 1u);   // second column clipped at x_max=1
 }
 
+// The whole printable range renders as itself, not as '?'.
+//
+// This is here because getting it wrong is invisible on the target and total on
+// the host: a real font spans 0x20..0x7F, so `first + count` is 128, and a
+// signed-char comparison against that wraps negative and swallows every
+// character. ARM's char is unsigned so the pedal looked fine; every host render
+// came out as question marks. The check must not depend on the sign of a char,
+// and this pins it with a font whose range crosses 0x7F.
+void test_var_font_spans_the_whole_printable_range(void) {
+    // 96 glyphs from 0x20, so the last is 0x7F and first + count == 128 —
+    // exactly the boundary a signed comparison mishandles. Each glyph is one
+    // column, its bits taken from its own index, so glyphs are distinguishable.
+    static uint8_t  w[96], a[96], b[96];
+    static uint16_t o[96];
+    for (uint8_t i = 0; i < 96; ++i) { w[i] = 1; a[i] = 1; o[i] = i; b[i] = (uint8_t)(i | 0x80u); }
+    const display::Font f = {8, 7, 0x20u, 96, w, a, o, b};
+
+    static const char probes[] = { ' ', 'A', 'z', '~', (char)0x7F };
+    for (char c : probes) {
+        display::clear();
+        display::draw_glyph(f, 0, 0, c);
+        TEST_ASSERT_EQUAL_UINT8(b[(uint8_t)c - 0x20u], s_fb[0][0]);
+    }
+
+    // Outside the font, and only outside it, substitutes '?'.
+    display::clear();
+    display::draw_glyph(f, 0, 0, (char)0x80);
+    TEST_ASSERT_EQUAL_UINT8(b['?' - 0x20], s_fb[0][0]);
+    display::clear();
+    display::draw_glyph(f, 0, 0, (char)0x1F);
+    TEST_ASSERT_EQUAL_UINT8(b['?' - 0x20], s_fb[0][0]);
+}
+
+// text_width measures the same characters draw_glyph draws — one substitution
+// rule, not two.
+void test_text_width_agrees_with_the_glyph_range(void) {
+    static uint8_t  w[96], a[96], b[96];
+    static uint16_t o[96];
+    for (uint8_t i = 0; i < 96; ++i) { w[i] = 1; a[i] = (uint8_t)(1u + (i & 3u)); o[i] = i; b[i] = 0xFF; }
+    const display::Font f = {8, 7, 0x20u, 96, w, a, o, b};
+
+    TEST_ASSERT_EQUAL_UINT8(a['A' - 0x20] + a['z' - 0x20], display::text_width(f, "Az"));
+    // An out-of-range byte measures as the '?' it will draw as.
+    const char out[] = { (char)0x80, '\0' };
+    TEST_ASSERT_EQUAL_UINT8(a['?' - 0x20], display::text_width(f, out));
+}
+
 // draw_text_right shifts the run so it ends at x+width.
 void test_draw_text_right_aligns(void) {
     display::draw_text_right(0, 2, "Hi", 30);    // 2*6=12 px in a 30 px field
@@ -316,6 +363,8 @@ int main(int, char**) {
     RUN_TEST(test_draw_hline_sets_row);
     RUN_TEST(test_invert_rect_xors_region);
     RUN_TEST(test_var_font_glyph_and_width);
+    RUN_TEST(test_var_font_spans_the_whole_printable_range);
+    RUN_TEST(test_text_width_agrees_with_the_glyph_range);
     RUN_TEST(test_draw_text_right_aligns);
     RUN_TEST(test_compose_hslide_endpoints_show_single_frame);
     RUN_TEST(test_compose_hslide_dir_pos_slides_to_in_from_right);
