@@ -295,6 +295,17 @@ constexpr uint16_t read_u14(const uint8_t* p)
 
 inline constexpr uint8_t PRESET_HEAD_LEN = 6u;   // bank..param_count
 
+// The largest preset frame a product can produce, so it can size its buffer
+// once from its own constants rather than guessing and hoping.
+constexpr uint16_t preset_frame_max(uint8_t param_count, uint8_t name_len, uint8_t tlv_bytes)
+{
+    return (uint16_t)(5u                                  // F0 mfr dev cmd ... F7
+                      + PRESET_HEAD_LEN
+                      + (uint16_t)param_count * 2u
+                      + 1u + (uint16_t)name_len           // name length byte, then the name
+                      + (uint16_t)tlv_bytes);
+}
+
 struct PresetHead {
     uint16_t slot;
     uint8_t  format;        // PROTOCOL_VERSION at the time it was written
