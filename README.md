@@ -48,6 +48,40 @@ The pictures are the firmware's own framebuffer, scaled — a screen the pedal
 cannot draw is a screen that cannot appear in the docs, and a layout change that
 was not regenerated shows up as a diff.
 
+## The user manual
+
+Every pedal in the family ships a Markdown manual rendered to PDF the same way,
+so the template, the LaTeX preamble and the engine choice live here rather than
+once per product:
+
+| File | What it is |
+|---|---|
+| [tools/build_manual.py](tools/build_manual.py) | The renderer: Pandoc + Eisvogel + Tectonic, tool discovery, image resolution |
+| [tools/manual/eisvogel.latex](tools/manual/eisvogel.latex) | The vendored Eisvogel template — title page, headers, code styling |
+| [tools/manual/manual-header.tex](tools/manual/manual-header.tex) | Shared verbatim preamble: the `linknavy` link colour, and `fvextra` so long code lines wrap |
+
+Tectonic pulls the LaTeX packages it needs on demand and caches them, so no
+system-wide TeX install is required — only the first run needs network access.
+
+What stays with the product is the part that differs: `docs/manual/MANUAL.md`
+(the content) and `tools/manual-meta.yaml` (title, subtitle, page geometry). A
+product drives the renderer from a shim at its own `tools/build_pdf.py`, so the
+command is `python tools/build_pdf.py` in every repo:
+
+```python
+from pathlib import Path
+import sys
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "firmware/lib/pedal-core/tools"))
+from build_manual import main
+sys.exit(main(["--manual", str(ROOT / "docs/manual/MANUAL.md"),
+               "--meta",   str(ROOT / "tools/manual-meta.yaml")]))
+```
+
+Images resolve from the manual's own directory, so `../images/x.png` renders the
+same in the PDF as it does on GitHub. A product needing extra preamble passes
+`--extra-header`; one keeping figures elsewhere passes `--resource-path`.
+
 ## Migrating an existing pedal onto this
 
 [MIGRATION.md](MIGRATION.md) — the per-file inventory, the polarity traps in the
