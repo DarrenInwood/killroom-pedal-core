@@ -26,6 +26,27 @@ PlatformIO's library dependency finder picks it up from there via
 | `pedal_core/dfu_session.hpp` | pure header | The DFU write session — chunk decode, bounds checks, erase/write sequencing, image verify — with flash behind a three-function seam |
 | `pedal_core/app_image.hpp` | pure header | Boot-time application-image validation: descriptor magic, size, CRC32 trailer |
 | `pedal_core/dfu_progress.hpp` | pure header | Upload percentage and its display string |
+| `pedal_core/frame_dump.hpp` | pure header | The screenshot container — captured display frames on their way to [tools/oled_png.py](tools/oled_png.py) |
+
+## Screenshots of the UI
+
+A product documents its screens by generating them, not by drawing them. Build a
+host program that compiles the real `display.cpp` and the product's own
+compositor behind HAL no-ops — the idiom `test/test_display` already uses — drive
+it through the states worth picturing, and write each `display::capture()` out
+with [include/pedal_core/frame_dump.hpp](include/pedal_core/frame_dump.hpp). Then:
+
+```
+python tools/oled_png.py path/to/frames.bin --out docs/images/screens --sheet all_screens
+```
+
+[tools/oled_png.py](tools/oled_png.py) is standard library only, so the same
+check that proves a product's docs are current runs in CI without a pip step.
+
+The point of the split is that no second implementation of the layout exists.
+The pictures are the firmware's own framebuffer, scaled — a screen the pedal
+cannot draw is a screen that cannot appear in the docs, and a layout change that
+was not regenerated shows up as a diff.
 
 ## Migrating an existing pedal onto this
 
