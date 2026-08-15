@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "sysex_codec.hpp"
 
 // The application's SysEx wire contract, shared by every pedal in the family
 // and by the host editor. dfu_protocol.hpp covers the bootloader's half; this
@@ -117,6 +118,42 @@ inline constexpr uint8_t DEVICE_INFO_FRAME_LEN = 17u;
 
 // The MCU unique ID, 96 bits on every part in the family.
 inline constexpr uint8_t UID_BYTE_LEN = 12u;
+
+// The same ID 7-bit packed, as it travels: two groups of seven binary bytes
+// become two MSB bytes plus twelve data bytes.
+inline constexpr uint8_t UID_PACKED_LEN = 14u;
+
+// --- addressing a pedal by unit ---------------------------------------------
+//
+// ENTER_BOOTLOADER carries the target's UID, and a pedal whose own ID does not
+// match ignores it.
+//
+// This is not belt and braces. Over USB the command reaches one port and only
+// one pedal hears it, but over DIN every pedal downstream of the sender sees
+// every byte, and two pedals of the same model answer to the same device byte.
+// An unaddressed reboot command would put an entire chain of them into DFU at
+// once — and a bootloader cannot say which unit it is, so a host then cannot
+// tell them apart to fix it. Each one needs a power cycle.
+//
+// A frame carrying no UID is therefore ignored rather than obeyed. The escape
+// hatch for a pedal that cannot be addressed is the one that does not depend on
+// firmware at all: hold both footswitches at power-on.
+inline bool uid_matches(const uint8_t* payload, uint16_t plen,
+                        const uint8_t* uid, uint8_t uid_len)
+{
+    if (payload == nullptr || uid == nullptr) return false;
+    if (uid_len != UID_BYTE_LEN) return false;
+    if (plen < UID_PACKED_LEN) return false;
+
+    uint8_t decoded[UID_BYTE_LEN] = {};
+    const uint16_t n = sysex_codec::decode_7bit(payload, decoded, UID_PACKED_LEN, sizeof(decoded));
+    if (n != UID_BYTE_LEN) return false;
+
+    for (uint8_t i = 0; i < UID_BYTE_LEN; ++i) {
+        if (decoded[i] != uid[i]) return false;
+    }
+    return true;
+}
 
 // --- building ---------------------------------------------------------------
 

@@ -409,6 +409,69 @@ void test_preset_rejects_an_unrelated_command(void) {
     TEST_ASSERT_FALSE(parse_preset(buf, n, 0x01u, v));
 }
 
+
+// --- addressing by unit -----------------------------------------------------
+//
+// A pedal must reboot into DFU only when the command names it. Over DIN every
+// pedal downstream sees every byte and two of a model share a device byte, so
+// an unaddressed reboot would take a whole chain down at once.
+
+static void pack_uid(const uint8_t* uid, uint8_t* out)
+{
+    sysex_codec::encode_7bit(uid, out, UID_BYTE_LEN, UID_PACKED_LEN);
+}
+
+void test_uid_matches_its_own(void) {
+    uint8_t uid[UID_BYTE_LEN];
+    for (uint8_t i = 0; i < UID_BYTE_LEN; ++i) uid[i] = (uint8_t)(0x11u * (i + 1u));
+    uint8_t packed[UID_PACKED_LEN] = {};
+    pack_uid(uid, packed);
+    TEST_ASSERT_TRUE(uid_matches(packed, UID_PACKED_LEN, uid, UID_BYTE_LEN));
+}
+
+void test_uid_rejects_another_unit(void) {
+    uint8_t mine[UID_BYTE_LEN];
+    uint8_t theirs[UID_BYTE_LEN];
+    for (uint8_t i = 0; i < UID_BYTE_LEN; ++i) {
+        mine[i]   = (uint8_t)(0x11u * (i + 1u));
+        theirs[i] = mine[i];
+    }
+    theirs[UID_BYTE_LEN - 1u] ^= 0x01u;   // one bit apart: the next unit off the line
+    uint8_t packed[UID_PACKED_LEN] = {};
+    pack_uid(theirs, packed);
+    TEST_ASSERT_FALSE(uid_matches(packed, UID_PACKED_LEN, mine, UID_BYTE_LEN));
+}
+
+void test_uid_rejects_a_high_byte_difference(void) {
+    // The 7-bit packing carries bit 7 in a separate byte, so a difference only
+    // in the high bits must survive the round trip and still be seen.
+    uint8_t mine[UID_BYTE_LEN] = {};
+    uint8_t theirs[UID_BYTE_LEN] = {};
+    for (uint8_t i = 0; i < UID_BYTE_LEN; ++i) { mine[i] = 0x80u; theirs[i] = 0x00u; }
+    uint8_t packed[UID_PACKED_LEN] = {};
+    pack_uid(theirs, packed);
+    TEST_ASSERT_FALSE(uid_matches(packed, UID_PACKED_LEN, mine, UID_BYTE_LEN));
+    pack_uid(mine, packed);
+    TEST_ASSERT_TRUE(uid_matches(packed, UID_PACKED_LEN, mine, UID_BYTE_LEN));
+}
+
+void test_uid_rejects_an_unaddressed_command(void) {
+    // The whole point: a bare reboot command names no unit, so no unit obeys it.
+    uint8_t uid[UID_BYTE_LEN];
+    for (uint8_t i = 0; i < UID_BYTE_LEN; ++i) uid[i] = (uint8_t)(i + 1u);
+    TEST_ASSERT_FALSE(uid_matches(nullptr, 0u, uid, UID_BYTE_LEN));
+}
+
+void test_uid_rejects_a_truncated_payload(void) {
+    uint8_t uid[UID_BYTE_LEN];
+    for (uint8_t i = 0; i < UID_BYTE_LEN; ++i) uid[i] = (uint8_t)(i + 1u);
+    uint8_t packed[UID_PACKED_LEN] = {};
+    pack_uid(uid, packed);
+    for (uint8_t len = 0; len < UID_PACKED_LEN; ++len) {
+        TEST_ASSERT_FALSE(uid_matches(packed, len, uid, UID_BYTE_LEN));
+    }
+}
+
 int main(int, char**)
 {
     UNITY_BEGIN();
@@ -440,5 +503,10 @@ int main(int, char**)
     RUN_TEST(test_preset_rejects_a_truncated_frame);
     RUN_TEST(test_preset_rejects_a_foreign_manufacturer);
     RUN_TEST(test_preset_rejects_an_unrelated_command);
+    RUN_TEST(test_uid_matches_its_own);
+    RUN_TEST(test_uid_rejects_another_unit);
+    RUN_TEST(test_uid_rejects_a_high_byte_difference);
+    RUN_TEST(test_uid_rejects_an_unaddressed_command);
+    RUN_TEST(test_uid_rejects_a_truncated_payload);
     return UNITY_END();
 }

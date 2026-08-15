@@ -13,8 +13,18 @@
 // Commands are APPEND-ONLY: a host updater in the field speaks whatever
 // version it shipped with.
 //
-//   Enter DFU (sent to the application):
-//     F0 <mfr> <dev> 01 F7
+//   Enter DFU (sent to the application). The payload is the target's 96-bit
+//   MCU unique ID, 7-bit packed, and a pedal whose own ID does not match
+//   ignores the frame:
+//     F0 <mfr> <dev> 01 [uid12, 7-bit packed as 14 bytes] F7
+//
+//   The address is not optional. Over USB the command reaches one port and one
+//   pedal, but over DIN every pedal downstream sees every byte, and two of a
+//   model answer to the same device byte -- so an unaddressed reboot would put
+//   a whole chain into DFU at once. A bootloader cannot say which unit it is,
+//   so a host could not then tell them apart to recover; each would need a
+//   power cycle. Holding both footswitches at power-on remains the way in for a
+//   pedal that cannot be addressed.
 //   Begin firmware — the total image size, so the bootloader can show a
 //   percentage. Also resets the write session, so resending it starts a clean
 //   retry after a failure:
