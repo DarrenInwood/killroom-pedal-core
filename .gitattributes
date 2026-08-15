@@ -1,0 +1,8 @@
+# The library is LF throughout, including on Windows checkouts: consumer repos
+# diff moved-in files against their own copies with --ignore-cr-at-eol, and a
+# CRLF drift here would put churn in every such review.
+* text=auto eol=lf
+
+# Font sources are text (BDF); keep anything binary out of the filter.
+*.png binary
+*.bin binary
