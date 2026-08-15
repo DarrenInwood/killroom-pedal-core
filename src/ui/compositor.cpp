@@ -118,8 +118,13 @@ void Compositor::draw_header(uint32_t now)
     const uint8_t inset = draw_header_icon(now);
 
     // Preset number, right-aligned in the largest header font — plain digits, no badge.
+    //
+    // Zero-based, and that is the whole point: this number is the MIDI Program Change
+    // number. A player reading 012 off the display can send bank 0, program 12 and land
+    // here. Counting from 1 on screen was friendlier to read and forced everyone
+    // addressing the pedal to subtract one, which is the error nobody catches on stage.
     char num[8];
-    snprintf(num, sizeof(num), "%03u", (unsigned)(m_preset + 1u));
+    snprintf(num, sizeof(num), "%03u", (unsigned)m_preset);
     const uint8_t num_w = display::text_width(display::FONT_NAME, num);
     const uint8_t num_x = (uint8_t)(OLED_WIDTH - num_w);
     display::draw_text_right(display::FONT_NAME, OLED_WIDTH,
