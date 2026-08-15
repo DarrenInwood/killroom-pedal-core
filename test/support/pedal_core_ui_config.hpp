@@ -15,3 +15,10 @@ inline constexpr uint32_t FOOTSWITCH_HOLD_MS     = 600u;
 // MIDI receive (midi_handler.cpp): SysEx accumulation buffer, sized clear of
 // the largest frame the product accepts.
 inline constexpr uint16_t SYSEX_RX_BUF = 512u;
+
+// The NRPN quad (midi_responder_base.cpp) — standard CC numbers.
+inline constexpr uint8_t MIDI_CC_DATA_ENTRY_MSB = 6u;
+inline constexpr uint8_t MIDI_CC_DATA_ENTRY_LSB = 38u;
+inline constexpr uint8_t MIDI_CC_NRPN_LSB       = 98u;
+inline constexpr uint8_t MIDI_CC_NRPN_MSB       = 99u;
+inline constexpr uint8_t NRPN_BANK_PARAMS       = 0u;
