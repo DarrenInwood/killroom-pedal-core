@@ -1,5 +1,17 @@
 # Migrating a pedal onto pedal-core
 
+> The library also carries the app/UI layer: `ui::Compositor` (subclass with a
+> LayoutSpec + your icons/screens/splash), `PedalBase` (the family MIDI
+> meanings — NRPN latch, bank/PC arithmetic, SysEx dispatch — behind hooks for
+> your write path and command bodies), `MidiResponderBase`, and the
+> footswitch / bypass / midi_handler / tap_tempo / tempo_controller /
+> tempo_led / external_input modules plus the storage machinery
+> (`blocks::seal`, sealed blocks, `SlotRing`). Consumers provide
+> `pedal_core_ui_config.hpp` (and `pedal_core_tempo_config.hpp` /
+> `pedal_core_extinput_config.hpp` where those domains exist); the reference
+> stubs in `test/support/` name every constant. The sections below describe
+> the original leaf-module migration and still apply to it.
+
 How to move an existing firmware onto this library. Written for the pedals this
 library was extracted *from*, where most of the code is already here and the
 work is re-pointing rather than rewriting.
