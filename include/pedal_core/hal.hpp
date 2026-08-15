@@ -49,4 +49,12 @@ namespace pedal_core::hal {
     void display_dc_data(bool data);    // true = pixel data, false = command
     void display_reset(bool in_reset);
     void display_power(bool on);        // panel supply / boost enable
+
+    // Footswitches: raw pressed state for the library's debouncer. `idx` is
+    // 0-based in the product's own switch order; polarity and pull-ups are the
+    // product's business. footswitch_pins_init() configures the inputs and is
+    // called once from footswitch::init() — a product whose panel bring-up
+    // already configured them implements it as a forward or a no-op.
+    void footswitch_pins_init();
+    bool fs_pressed(uint8_t idx);
 }
