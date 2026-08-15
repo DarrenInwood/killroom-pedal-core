@@ -16,6 +16,10 @@ inline constexpr uint32_t FOOTSWITCH_HOLD_MS     = 600u;
 // the largest frame the product accepts.
 inline constexpr uint16_t SYSEX_RX_BUF = 512u;
 
+// Transient-overlay dwell (ui/compositor.cpp): how long the param focus card
+// and system banners stay up.
+inline constexpr uint32_t DISPLAY_PARAM_SHOW_MS = 750u;
+
 // The NRPN quad (midi_responder_base.cpp) — standard CC numbers.
 inline constexpr uint8_t MIDI_CC_DATA_ENTRY_MSB = 6u;
 inline constexpr uint8_t MIDI_CC_DATA_ENTRY_LSB = 38u;
