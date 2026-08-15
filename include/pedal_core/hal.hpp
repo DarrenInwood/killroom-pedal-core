@@ -33,6 +33,20 @@ namespace watchdog {
     void kick();
 }
 
+// The MIDI transports. Byte-level DIN in/out and packetised USB-MIDI, with
+// the same signatures the products' drivers already carry, so the hardware
+// implementation is the product's existing driver and no adapter exists.
+namespace uart {
+    bool read(uint8_t& byte);    // one byte from the RX ring; false when empty
+    void write(uint8_t byte);    // non-blocking TX (also carries the DIN Thru)
+}
+
+namespace usb_midi {
+    bool read(uint8_t& byte);
+    void send(const uint8_t* msg, uint8_t len);          // one complete 1-3 byte message
+    void send_sysex(const uint8_t* frame, uint16_t len); // F0 ... F7, chunked into packets
+}
+
 namespace pedal_core::hal {
     // Pin plumbing. `select`/`on`/`in_reset` are logical states; the product
     // maps each to its electrical level and port/pin, so an active-low chip
