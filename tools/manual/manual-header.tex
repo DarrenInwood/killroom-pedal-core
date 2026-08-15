@@ -1,0 +1,13 @@
+% Verbatim LaTeX preamble additions shared by every pedal manual in the family
+% (pandoc --include-in-header, added by tools/build_manual.py). A product that
+% needs more passes its own file to --extra-header; this one stays generic.
+%
+% Navy for hyperlinks and the table of contents. Named rather than hard-coded so a
+% product's manual-meta.yaml can refer to it as linkcolor/urlcolor/toccolor.
+\definecolor{linknavy}{HTML}{1B3A5B}
+% Wrap long code lines (a SysEx byte layout, a switch-word table) instead of
+% overflowing the margin. Pandoc emits plain code blocks as the kernel `verbatim`;
+% redefine it as an fvextra Verbatim so long lines break rather than run off the page.
+\usepackage{fvextra}
+\fvset{breaklines=true,breakanywhere=true}
+\DefineVerbatimEnvironment{verbatim}{Verbatim}{breaklines=true,breakanywhere=true}
