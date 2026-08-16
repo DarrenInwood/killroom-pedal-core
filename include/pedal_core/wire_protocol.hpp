@@ -89,6 +89,7 @@ inline constexpr uint16_t CALIBRATION    = 1u << 5;
 inline constexpr uint16_t FACTORY_BANK   = 1u << 6;
 inline constexpr uint16_t UID            = 1u << 7;  // answers UID_REQ
 inline constexpr uint16_t SAVE_ADDRESSED = 1u << 8;  // PRESET_SAVE takes <bank><prog>
+inline constexpr uint16_t BOOST          = 1u << 9;  // presets carry a second sound, the preset's BOOST tag
 }  // namespace cap
 
 // --- TLV tags ---------------------------------------------------------------
@@ -97,6 +98,10 @@ inline constexpr uint16_t SAVE_ADDRESSED = 1u << 8;  // PRESET_SAVE takes <bank>
 namespace preset_tag {
 inline constexpr uint8_t EXPR  = 0x01u;  // <param 0x7F=off> <min_lo7> <min_hi7> <max_lo7> <max_hi7>
 inline constexpr uint8_t TEMPO = 0x02u;  // <sync 0|1> <bpm_x10_lo7> <bpm_x10_hi7>
+// The alternate sound a boost footswitch selects: a whole voice and parameter set,
+// plus a signed step count for products that switch an input filter with it. Absent
+// means the product has no second sound, or that it equals the primary.
+inline constexpr uint8_t BOOST = 0x03u;  // <voice> <p0_lo7> <p0_hi7> ... <tighten+64>
 }  // namespace preset_tag
 
 namespace global_tag {
