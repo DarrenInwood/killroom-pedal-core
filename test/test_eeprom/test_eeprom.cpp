@@ -148,6 +148,79 @@ void test_ram_fallback_rejects_out_of_range(void) {
     TEST_ASSERT_FALSE(eeprom::read((uint16_t)(EEPROM_STORE_SIZE - 1u), buf, 2));  // straddles the end
 }
 
+// --- What the partial mirror holds -------------------------------------------------
+// The stub config mirrors the header, the system-block tail, and one record-sized window
+// into the bulk region between them. These pin which of the three an address lands in.
+
+static void fail_the_probe(void) {
+    spi::g_rx_feed = {0x00, 0x00};
+    spi::g_rx_pos = 0;
+    eeprom::init();
+    TEST_ASSERT_FALSE(eeprom::healthy());
+}
+
+// The header and the system blocks are always held, so settings and calibration survive a
+// session on a dead part exactly as they did when the whole map was mirrored.
+void test_ram_mirror_always_holds_head_and_tail(void) {
+    fail_the_probe();
+    const uint8_t head[4] = { 1, 2, 3, 4 };
+    const uint8_t tail[4] = { 5, 6, 7, 8 };
+    uint8_t buf[4] = {0};
+
+    TEST_ASSERT_TRUE(eeprom::write(0x0000, head, 4));
+    TEST_ASSERT_TRUE(eeprom::write(EEPROM_MIRROR_TAIL_BASE, tail, 4));
+
+    TEST_ASSERT_TRUE(eeprom::read(0x0000, buf, 4));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(head, buf, 4);
+    TEST_ASSERT_TRUE(eeprom::read(EEPROM_MIRROR_TAIL_BASE, buf, 4));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(tail, buf, 4);
+}
+
+// One record of the bulk region is held: the one written last. That is what lets a pedal
+// with a dead store still edit and save the preset it is sitting on.
+void test_ram_mirror_holds_the_record_written_last(void) {
+    fail_the_probe();
+    uint8_t rec[EEPROM_MIRROR_SLOT_BYTES];
+    for (uint16_t i = 0; i < sizeof(rec); ++i) rec[i] = (uint8_t)(i ^ 0x5Au);
+    uint8_t buf[EEPROM_MIRROR_SLOT_BYTES] = {0};
+
+    TEST_ASSERT_TRUE(eeprom::write(EEPROM_MIRROR_HEAD_END, rec, sizeof(rec)));
+    TEST_ASSERT_TRUE(eeprom::read(EEPROM_MIRROR_HEAD_END, buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(rec, buf, sizeof(rec));
+}
+
+// Writing a second record evicts the first. The evicted one must read as a BLANK device
+// rather than as an error or as stale bytes: the caller's CRC then rejects it and
+// substitutes a default, which is the same path an unwritten slot takes on a healthy part.
+void test_ram_mirror_evicts_the_previous_record_as_blank(void) {
+    fail_the_probe();
+    const uint16_t a = EEPROM_MIRROR_HEAD_END;
+    const uint16_t b = (uint16_t)(a + EEPROM_MIRROR_SLOT_BYTES);
+    uint8_t rec_a[EEPROM_MIRROR_SLOT_BYTES], rec_b[EEPROM_MIRROR_SLOT_BYTES];
+    for (uint16_t i = 0; i < sizeof(rec_a); ++i) { rec_a[i] = 0xA0u; rec_b[i] = 0x0Bu; }
+    uint8_t buf[EEPROM_MIRROR_SLOT_BYTES] = {0};
+
+    TEST_ASSERT_TRUE(eeprom::write(a, rec_a, sizeof(rec_a)));
+    TEST_ASSERT_TRUE(eeprom::write(b, rec_b, sizeof(rec_b)));
+
+    TEST_ASSERT_TRUE(eeprom::read(b, buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(rec_b, buf, sizeof(rec_b));
+
+    TEST_ASSERT_TRUE(eeprom::read(a, buf, sizeof(buf)));   // succeeds...
+    for (uint16_t i = 0; i < sizeof(buf); ++i)
+        TEST_ASSERT_EQUAL_UINT8(0xFFu, buf[i]);            // ...as a blank device
+}
+
+// A record never written reads blank too, so a dead-part boot finds no valid bank and
+// every slot falls back to its voice's defaults.
+void test_ram_mirror_unheld_record_reads_blank(void) {
+    fail_the_probe();
+    uint8_t buf[8];
+    for (uint8_t i = 0; i < sizeof(buf); ++i) buf[i] = 0x11u;
+    TEST_ASSERT_TRUE(eeprom::read((uint16_t)(EEPROM_MIRROR_TAIL_BASE - 128u), buf, sizeof(buf)));
+    for (uint8_t i = 0; i < sizeof(buf); ++i) TEST_ASSERT_EQUAL_UINT8(0xFFu, buf[i]);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_read_command_framing);
@@ -155,5 +228,9 @@ int main(int, char**) {
     RUN_TEST(test_write_splits_on_page_boundary);
     RUN_TEST(test_failed_probe_falls_back_to_ram);
     RUN_TEST(test_ram_fallback_rejects_out_of_range);
+    RUN_TEST(test_ram_mirror_always_holds_head_and_tail);
+    RUN_TEST(test_ram_mirror_holds_the_record_written_last);
+    RUN_TEST(test_ram_mirror_evicts_the_previous_record_as_blank);
+    RUN_TEST(test_ram_mirror_unheld_record_reads_blank);
     return UNITY_END();
 }

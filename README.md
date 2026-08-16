@@ -19,7 +19,7 @@ PlatformIO's library dependency finder picks it up from there via
 | `pedal_core/usb_midi_cin.hpp` | pure header | USB-MIDI 1.0 CIN classification, both directions |
 | `pedal_core/vbus_debounce.hpp` | pure header | VBUS presence debouncer for self-powered devices |
 | `pedal_core/font.hpp` + `font_data.*` | header + data | The family's variable-width OLED fonts; regenerate with [tools/gen_fonts.py](tools/gen_fonts.py) |
-| `pedal_core/eeprom.*` | protocol driver | 25xx256: page-bounded writes, boot health probe, RAM-mirror fallback |
+| `pedal_core/eeprom.*` | protocol driver | 25xx, 16-bit address (25LC256 / 25LC512): page-bounded writes at the product's page size, boot health probe, and a RAM-mirror fallback sized by the product — whole-map where it fits, header + system blocks + one record window where it does not |
 | `pedal_core/display.*` | protocol driver | SSD1309 / SSD1306 / ST7567 framebuffer driver with pixel-precise text, gauges, `invert_region`, slide composition |
 | `pedal_core/sysex_codec.hpp` | pure header | Roland-style 7-bit SysEx packing and CRC32 — the firmware-update codec |
 | `pedal_core/dfu_protocol.hpp` | pure header | The DFU-over-SysEx wire contract: command bytes and status codes |
