@@ -3,12 +3,6 @@
 
 using pedal_core::PedalBase;
 
-uint16_t PedalBase::cc_to_param(uint8_t v)
-{
-    // 7-bit scaled so 127 lands exactly on PARAM_MAX.
-    return (uint16_t)(((uint32_t)v * PARAM_MAX + 63u) / 127u);
-}
-
 void PedalBase::nrpn_apply_value(uint16_t value)
 {
     if (!nrpn_latched() || m_nrpn_msb != NRPN_BANK_PARAMS) return;
@@ -34,14 +28,19 @@ void PedalBase::on_midi_cc(uint8_t cc, uint8_t value)
     }
     if (cc == MIDI_CC_DATA_INC || cc == MIDI_CC_DATA_DEC) return;       // not implemented
     if (cc == MIDI_CC_DATA_ENTRY_MSB) {
-        // The MSB alone is a complete value at 7-bit resolution; an LSB may follow to
-        // refine it. Ignored outright when no parameter is selected.
+        // The MSB alone is a complete value at 7-bit resolution, scaled onto
+        // the parameter range exactly like a plain CC — a controller that
+        // sends only the MSB still sweeps the whole parameter, 127 landing on
+        // PARAM_MAX. The LSB that may follow refines it to the full 14-bit
+        // scale. Ignored outright when no parameter is selected.
         m_nrpn_data_msb = value;
-        nrpn_apply_value((uint16_t)((uint16_t)value << 7));
+        nrpn_apply_value(cc_to_param(value));
         return;
     }
     if (cc == MIDI_CC_DATA_ENTRY_LSB) {
-        nrpn_apply_value((uint16_t)(((uint16_t)m_nrpn_data_msb << 7) | value));
+        // The pair is a full-scale 14-bit value, 0..16383 across the whole
+        // parameter range, scaled onto PARAM_MAX.
+        nrpn_apply_value(nrpn_to_param((uint16_t)(((uint16_t)m_nrpn_data_msb << 7) | value)));
         return;
     }
 

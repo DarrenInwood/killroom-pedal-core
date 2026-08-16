@@ -16,9 +16,9 @@ public:
     void send_sysex(const uint8_t* buf, uint16_t len);
 
     // The NRPN quad: select the parameter (CC 99/98), then its value
-    // (CC 6/38). The value sits in the low bits of the data-entry pair at the
-    // width the product's DEVICE_INFO advertises, so a host reads it back
-    // exactly rather than as a fraction of 14 bits. USB takes one message per
+    // (CC 6/38) on the full 14-bit data-entry scale — 0..16383 spans the
+    // whole parameter range with exact endpoints, and the inbound path maps
+    // it back to the identical parameter value. USB takes one message per
     // packet; the UART stream can share a running status byte but is written
     // plainly so both transports carry the same four messages.
     void send_param_nrpn(uint8_t idx, uint16_t value);

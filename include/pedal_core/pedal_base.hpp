@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include "ialgorithm.hpp"
+#include "param_scale.hpp"
 
 // The family's MIDI meanings: what a Control Change, a Program Change and a
 // SysEx frame DO on a pedal. The base owns the machinery every product speaks
@@ -28,8 +29,11 @@ public:
     void on_midi_program_change(uint8_t program);
     void on_midi_sysex(const uint8_t* data, uint16_t len);
 
-    // 7-bit CC value scaled so 127 lands exactly on PARAM_MAX.
-    static uint16_t cc_to_param(uint8_t v);
+    // The value scales, named here because this is where a host meets them.
+    // The definitions are param_scale.hpp's, shared with the outbound echo.
+    static uint16_t cc_to_param(uint8_t v)      { return param_scale::from_cc(v); }
+    static uint16_t nrpn_to_param(uint16_t v14) { return param_scale::from_nrpn(v14); }
+    static uint16_t param_to_nrpn(uint16_t v)   { return param_scale::to_nrpn(v); }
 
 protected:
     ~PedalBase() = default;
