@@ -14,10 +14,10 @@
 //
 // Before protocol 3 the two pedals shared this envelope and their CC map and
 // agreed on almost nothing else. DEVICE_INFO was sixteen bytes on one and
-// fifteen on the other, because the modulator sent a bank count the distortion
+// fifteen on the other, because the multi-effect sent a bank count the distortion
 // had no field for — so every byte after it shifted. The preset frame was 64
 // bytes against 58, with the parameters starting at a different offset and the
-// modulator carrying expression, sync and BPM fields in a tail the distortion
+// multi-effect carrying expression, sync and BPM fields in a tail the distortion
 // did not have. GLOBAL_DATA differed again. A host had to carry two codecs and
 // choose between them on the device byte, and a third pedal would have meant a
 // third.

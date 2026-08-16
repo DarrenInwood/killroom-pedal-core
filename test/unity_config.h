@@ -2,7 +2,7 @@
 //
 // PlatformIO looks for this file when configuring the Unity test framework.
 // The native env (pio test -e native) uses stdio by default and ignores these
-// overrides.  The firmware envs (modulator_dev / modulator) need at least a
+// overrides.  The firmware envs (multi_effect_dev / multi_effect) need at least a
 // minimal UNITY_OUTPUT_CHAR so the Unity source compiles against CMSIS.
 //
 // Note: embedded tests still require physical hardware to upload and run.

@@ -270,7 +270,7 @@ void test_expression_off_sentinel_is_a_legal_data_byte(void) {
 // --- the preset frame -------------------------------------------------------
 
 // Build a representative frame: seven parameters, a name, and the two tags a
-// modulator sends.
+// multi-effect sends.
 static uint16_t build_sample_preset(uint8_t* buf, uint16_t cap, uint8_t device)
 {
     PresetHead h{};
