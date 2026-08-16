@@ -59,6 +59,7 @@ once per product:
 | [tools/build_manual.py](tools/build_manual.py) | The renderer: Pandoc + Eisvogel + Tectonic, tool discovery, image resolution |
 | [tools/manual/eisvogel.latex](tools/manual/eisvogel.latex) | The vendored Eisvogel template — title page, headers, code styling |
 | [tools/manual/manual-header.tex](tools/manual/manual-header.tex) | Shared verbatim preamble: the `linknavy` link colour, and `fvextra` so long code lines wrap |
+| [tools/diagram_kit.py](tools/diagram_kit.py) | The line-art toolkit the manuals' block diagrams are drawn with — supersampled strokes, labelled stage boxes, jacks, summing nodes, and a 200 dpi pHYs chunk so Pandoc sizes a figure to the text block |
 
 Tectonic pulls the LaTeX packages it needs on demand and caches them, so no
 system-wide TeX install is required — only the first run needs network access.
