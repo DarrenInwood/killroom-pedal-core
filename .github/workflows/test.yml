@@ -6,6 +6,22 @@ on:
   pull_request:
 
 jobs:
+  # The host-side tools have no unit tests of their own -- they are proved by the
+  # consumers' golden diffs, which cannot run here (some need pcbnew, none of them
+  # ship a board). Compiling them is the one guard this repo can offer against a
+  # library whose Python is broken for every consumer at once.
+  tools-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The shared tools parse
+        run: python -m compileall -q tools/
+      - name: The shell engines parse
+        run: for s in tools/*.sh; do bash -n "$s"; done
+
   native-tests:
     runs-on: ubuntu-latest
     steps:
