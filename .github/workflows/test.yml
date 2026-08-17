@@ -28,6 +28,10 @@ jobs:
       - name: The netlist parser reads a fixture correctly
         run: python tools/kicad/test_netlist.py
 
+      # This library's own docs, by the same gate the consumers run over theirs.
+      - name: Every relative doc link resolves
+        run: python tools/check_doc_links.py
+
   native-tests:
     runs-on: ubuntu-latest
     steps:
