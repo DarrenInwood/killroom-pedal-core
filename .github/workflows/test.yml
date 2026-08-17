@@ -22,6 +22,12 @@ jobs:
       - name: The shell engines parse
         run: for s in tools/*.sh; do bash -n "$s"; done
 
+      # netlist.py is the one thing under tools/kicad/ that can be tested here:
+      # everything else needs pcbnew and a board. It is also the piece three tools
+      # share, so a change to it is a change to all of them.
+      - name: The netlist parser reads a fixture correctly
+        run: python tools/kicad/test_netlist.py
+
   native-tests:
     runs-on: ubuntu-latest
     steps:

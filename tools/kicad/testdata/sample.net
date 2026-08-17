@@ -1,0 +1,113 @@
+(export
+	(version "E")
+	(design
+		(source "sample.kicad_sch")
+		(date "2026-01-01T00:00:00")
+		(tool "Eeschema")
+	)
+	(components
+		(comp
+			(ref "R1")
+			(value "10k")
+			(footprint "Resistor_SMD:R_0603_1608Metric")
+			(libsource
+				(lib "Device")
+				(part "10k")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+		)
+		(comp
+			(ref "C1")
+			(value "100nF")
+			(footprint "Capacitor_SMD:C_0603_1608Metric")
+			(libsource
+				(lib "Device")
+				(part "100nF")
+			)
+			(sheetpath
+				(names "/Power/")
+				(tstamps "/")
+			)
+		)
+		(comp
+			(ref "U1")
+			(value "OPA1678")
+			(footprint "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm")
+			(libsource
+				(lib "Device")
+				(part "OPA1678")
+			)
+			(sheetpath
+				(names "/Audio/")
+				(tstamps "/")
+			)
+		)
+		(comp
+			(ref "FID1")
+			(value "Fiducial")
+			(libsource
+				(lib "Device")
+				(part "Fiducial")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+		)
+	)
+	(nets
+		(net
+			(code "1")
+			(name "GND")
+			(node
+				(ref "R1")
+				(pin "2")
+				(pintype "passive")
+			)
+			(node
+				(ref "C1")
+				(pin "2")
+				(pintype "passive")
+			)
+			(node
+				(ref "U1")
+				(pin "4")
+				(pintype "power_in")
+				(pinfunction "V-")
+			)
+		)
+		(net
+			(code "2")
+			(name "VCC")
+			(node
+				(ref "C1")
+				(pin "1")
+				(pintype "passive")
+			)
+			(node
+				(ref "U1")
+				(pin "8")
+				(pintype "power_in")
+				(pinfunction "V+")
+			)
+		)
+		(net
+			(code "3")
+			(name "Net-(R1-Pad1)")
+			(node
+				(ref "R1")
+				(pin "1")
+				(pintype "passive")
+			)
+			(node
+				(ref "U1")
+				(pin "3")
+				(pintype "input")
+				(pinfunction "+")
+			)
+		)
+	)
+)
