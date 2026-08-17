@@ -250,7 +250,7 @@ def neighbour_spread(board):
 
 
 def report(path):
-    b = pcbnew.LoadBoard(path)
+    b = board_config.load_board(pcbnew, path)
     nets = pads_by_net(b)
     total = sum(mst_length(pts) for pts in nets.values())
 

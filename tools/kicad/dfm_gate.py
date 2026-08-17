@@ -50,7 +50,7 @@ def rect_point_dist(rect, x, y):
 def main():
     board_path, profile_name = sys.argv[1], sys.argv[2]
     profile = board_config.load().board(profile_name)
-    b = pcbnew.LoadBoard(board_path)
+    b = board_config.load_board(pcbnew, board_path)
     findings, warnings = [], []
 
     bds = b.GetDesignSettings()

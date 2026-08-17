@@ -181,3 +181,20 @@ def load(path=None):
     if not isinstance(data.get("boards"), dict) or not data["boards"]:
         raise ConfigError("%s has no 'boards' map" % path)
     return Config(path, data)
+
+
+def load_board(pcbnew, path):
+    """pcbnew.LoadBoard, but a missing or unreadable board says so.
+
+    pcbnew.LoadBoard returns None for a path that is not there, and the caller
+    then fails several lines later on `NoneType has no attribute GetFootprints`.
+    That is a poor way to learn a filename is wrong, and it is the common case in
+    a repository whose boards do not exist yet.
+    """
+    import os as _os
+    if not _os.path.isfile(path):
+        raise SystemExit("no such board: %s" % path)
+    b = pcbnew.LoadBoard(path)
+    if b is None:
+        raise SystemExit("could not read board: %s" % path)
+    return b
