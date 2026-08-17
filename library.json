@@ -1,7 +1,7 @@
 {
   "name": "pedal-core",
   "version": "0.1.0",
-  "description": "Shared firmware core for the pedal family: parameter-scale helpers, CRC, quadrature decode, USB-MIDI CIN tables, VBUS debounce, OLED fonts and display driver, 25xx256 EEPROM driver. Hardware reaches the library only through include/pedal_core/hal.hpp, which each product implements over its own MCU drivers.",
+  "description": "Shared firmware core for the pedal family: parameter-scale helpers, CRC, quadrature decode, USB-MIDI CIN tables, VBUS debounce, OLED fonts and display driver, 25xx SPI EEPROM driver. Hardware reaches the library only through include/pedal_core/hal.hpp, which each product implements over its own MCU drivers.",
   "keywords": [
     "pedal",
     "stm32",

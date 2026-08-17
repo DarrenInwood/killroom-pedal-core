@@ -1,7 +1,7 @@
 # pedal-core
 
 Shared firmware core for a family of guitar pedals built on the same control
-surface: a 128×64 monochrome OLED, a 25xx256-class SPI EEPROM preset store,
+surface: a 128×64 monochrome OLED, a 25xx-class SPI EEPROM preset store,
 10-bit parameters at every layer, and MIDI over USB and DIN.
 
 Consumers pull this repo in as a git submodule under `firmware/lib/pedal-core`;
