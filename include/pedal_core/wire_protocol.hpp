@@ -98,10 +98,10 @@ inline constexpr uint16_t BOOST          = 1u << 9;  // presets carry a second s
 namespace preset_tag {
 inline constexpr uint8_t EXPR  = 0x01u;  // <param 0x7F=off> <min_lo7> <min_hi7> <max_lo7> <max_hi7>
 inline constexpr uint8_t TEMPO = 0x02u;  // <sync 0|1> <bpm_x10_lo7> <bpm_x10_hi7>
-// The alternate sound a boost footswitch selects: a whole voice and parameter set,
+// The alternate sound a boost footswitch selects: a whole algorithm and parameter set,
 // plus a signed step count for products that switch an input filter with it. Absent
 // means the product has no second sound, or that it equals the primary.
-inline constexpr uint8_t BOOST = 0x03u;  // <voice> <p0_lo7> <p0_hi7> ... <tighten+64>
+inline constexpr uint8_t BOOST = 0x03u;  // <algorithm> <p0_lo7> <p0_hi7> ... <tighten+64>
 }  // namespace preset_tag
 
 namespace global_tag {
@@ -232,7 +232,7 @@ struct DeviceInfo {
     uint8_t  fw_minor;
     uint8_t  fw_patch;
     uint16_t slots;
-    uint8_t  algorithm_count;   // algorithms, voices — whatever the selector picks
+    uint8_t  algorithm_count;   // effects, distortion algorithms — whatever the selector picks
     uint8_t  param_count;
     uint8_t  param_bits;
     uint8_t  name_len;

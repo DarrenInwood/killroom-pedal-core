@@ -49,7 +49,7 @@ public:
     void update(uint32_t now);
 
     // --- state the producers push (each marks the frame dirty) --------------
-    virtual void set_context_name(const char* name);   // algorithm / voice name
+    virtual void set_context_name(const char* name);   // the algorithm's name
     virtual void set_preset(uint16_t slot);
     virtual void set_preset_name(const char* name);
     virtual void set_status(bool badge_on);            // header ♪ badge (tempo slaved)

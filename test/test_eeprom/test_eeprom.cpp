@@ -212,7 +212,7 @@ void test_ram_mirror_evicts_the_previous_record_as_blank(void) {
 }
 
 // A record never written reads blank too, so a dead-part boot finds no valid bank and
-// every slot falls back to its voice's defaults.
+// every slot falls back to its algorithm's defaults.
 void test_ram_mirror_unheld_record_reads_blank(void) {
     fail_the_probe();
     uint8_t buf[8];

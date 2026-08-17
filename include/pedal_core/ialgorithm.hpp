@@ -2,7 +2,7 @@
 #include <cstdint>
 
 // The algorithm surface the shared UI layer reads. A product's algorithm base
-// (a DSP effect with routing and clocks, a stateless voice over a parameter
+// (a DSP effect with routing and clocks, a stateless algorithm over a parameter
 // vector — whatever it is) implements these nine and the shared code needs
 // nothing else from it.
 //
