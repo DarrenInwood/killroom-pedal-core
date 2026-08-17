@@ -88,7 +88,7 @@ def mid_xy(fp, lcsc):
 def main():
     board_path, profile_name, bom_in, cpl_out, bom_out, hand_out = sys.argv[1:7]
     profile = board_config.load().board(profile_name)
-    b = pcbnew.LoadBoard(board_path)
+    b = board_config.load_board(pcbnew, board_path)
     ref2lcsc = load_ref_lcsc(bom_in)
 
     roster = {}

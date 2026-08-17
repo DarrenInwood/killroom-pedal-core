@@ -22,6 +22,7 @@ import sys
 import pcbnew
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import board_config
 import kicad_env
 import netlist as netlist_mod
 
@@ -83,7 +84,7 @@ def fpid_of(fp):
 board_path, net_path, proj_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 _nl = netlist_mod.parse(net_path)
 comps, pins, ptypes = _nl.comps, _nl.pins, _nl.types
-b = pcbnew.LoadBoard(board_path)
+b = board_config.load_board(pcbnew, board_path)
 
 # The one and only walk of the board's footprint container.
 fps = {fp.GetReference(): fp for fp in b.GetFootprints()}

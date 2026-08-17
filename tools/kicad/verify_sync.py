@@ -45,7 +45,7 @@ def fpid_of(fp):
 
 _nl = netlist_mod.parse(sys.argv[2])
 pins, comps = _nl.pins, _nl.comps
-b = pcbnew.LoadBoard(sys.argv[1])
+b = board_config.load_board(pcbnew, sys.argv[1])
 
 nonet, wrong, extra, pkg, val, missing = [], [], [], [], [], []
 ok = 0
