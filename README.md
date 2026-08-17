@@ -83,6 +83,49 @@ Images resolve from the manual's own directory, so `../images/x.png` renders the
 same in the PDF as it does on GitHub. A product needing extra preamble passes
 `--extra-header`; one keeping figures elsewhere passes `--resource-path`.
 
+## Cutting a release
+
+The bootloader's descriptor is defined here, in
+[`pedal_core/app_image.hpp`](include/pedal_core/app_image.hpp), so the host-side
+tools that write and check that descriptor belong here too. A product that kept
+its own copies would be maintaining a second definition of a contract it does not
+own — and the failure mode is silent, because an image the bootloader refuses
+does not crash, it leaves the pedal in DFU.
+
+| File | What it is |
+|---|---|
+| [tools/appimage_seal.py](tools/appimage_seal.py) | Patches the descriptor's `size` field and appends the CRC32 trailer. **Imported, never executed by SCons** — a product keeps a real post-build script that does `Import("env")`; only the algorithm is here |
+| [tools/app_image.py](tools/app_image.py) | The gate: re-implements `app_image::validate()` against the linked `.bin`, so a build that could not boot fails CI instead of a pedal |
+| [tools/release_manifest.py](tools/release_manifest.py) | Checks the release tag against `product.hpp`, then writes the per-product manifest entry the editor fetches |
+| [tools/setup_build_env.sh](tools/setup_build_env.sh) | Idempotent PlatformIO bootstrap; pre-fetches each named env's packages and prints `PIO=<path>` |
+
+All four are standard library only, so the gates run in CI without a pip step.
+
+What differs between products arrives as arguments rather than as an edited copy:
+the app region's size (`region_bytes`), the product's name, its `device_id` and
+`slug`, the macros its version lives in, and the list of PlatformIO envs. A
+product drives each from a shim, so the command is the same in every repo —
+`python tools/check_app_image.py <bin>`, `python tools/release_manifest.py …`,
+`bash tools/setup-build-env.sh`:
+
+```python
+# tools/check_app_image.py
+from pathlib import Path
+import sys
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "firmware/lib/pedal-core/tools"))
+from app_image import main
+sys.exit(main(sys.argv, region_bytes=..., usage=__doc__))
+```
+
+`device_id` and `slug` are wire and URL contracts the editor depends on, not
+labels — see [tools/release_manifest.py](tools/release_manifest.py).
+
+The shell engine takes `PROJECT_DIR` and `PIO_ENVS` from the environment for the
+same reason every Python shim passes paths in: **this library is a submodule, so
+anything a tool resolves from its own location points inside the library rather
+than at the product using it.**
+
 ## Migrating an existing pedal onto this
 
 [MIGRATION.md](MIGRATION.md) — the per-file inventory, the polarity traps in the
