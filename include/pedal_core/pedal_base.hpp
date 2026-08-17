@@ -78,7 +78,7 @@ protected:
     // The product's CC map, served from its midi_protocol constants.
     struct CcMap {
         uint8_t bypass;        // relay CC
-        uint8_t algo_select;   // algorithm/voice select CC
+        uint8_t algo_select;   // algorithm select CC
         uint8_t param_base;    // first of the contiguous parameter CCs
         uint8_t param_count;   // how many parameter CCs follow param_base
     };
