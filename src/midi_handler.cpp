@@ -9,6 +9,13 @@ extern "C" void on_midi_cc(uint8_t channel, uint8_t cc, uint8_t value);
 extern "C" void on_midi_program_change(uint8_t channel, uint8_t program);
 extern "C" void on_midi_sysex(const uint8_t* data, uint16_t len);
 extern "C" void on_midi_note_on(uint8_t channel, uint8_t note, uint8_t velocity);
+
+// Note off is weak, so the six callbacks a product already defines stay the whole
+// obligation: one that wants note lifetimes -- holding a pitch while a key is down, and
+// letting go when it is released -- overrides it, and every other product links unchanged.
+// The empty default is in midi_note_off_default.cpp rather than here, because a test
+// compiles this file into its own translation unit and supplies its own definition.
+extern "C" void on_midi_note_off(uint8_t channel, uint8_t note, uint8_t velocity);
 extern "C" void on_midi_clock();
 extern "C" void on_midi_clock_reset();
 
@@ -65,7 +72,11 @@ static void dispatch(uint8_t status, const uint8_t* data, uint8_t /*len*/)
             if (data[1] > 0) { on_midi_note_on(msg_ch, data[0], data[1]); break; }
             [[fallthrough]];  // note on with vel=0 = note off
         case 0x80:
-            break;  // note off carries nothing for these pedals
+            // Both spellings of note off reach the same callback, so a product never has
+            // to know which one a keyboard sends. data[1] is the release velocity, which
+            // is 0 for the vel-0 note-on spelling.
+            on_midi_note_off(msg_ch, data[0], data[1]);
+            break;
         case 0xB0:
             on_midi_cc(msg_ch, data[0], data[1]);
             break;

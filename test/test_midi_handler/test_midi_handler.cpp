@@ -34,6 +34,7 @@ struct NoteMsg { uint8_t ch, note, vel; };
 static std::vector<CcMsg>                g_cc;
 static std::vector<PcMsg>                g_pc;
 static std::vector<NoteMsg>              g_note;
+static std::vector<NoteMsg>              g_note_off;
 static std::vector<std::vector<uint8_t>> g_sysex;
 static int g_clock       = 0;
 static int g_clock_reset = 0;
@@ -42,6 +43,7 @@ extern "C" void on_midi_cc(uint8_t ch, uint8_t cc, uint8_t v)      { g_cc.push_b
 extern "C" void on_midi_program_change(uint8_t ch, uint8_t p)      { g_pc.push_back({ch, p}); }
 extern "C" void on_midi_sysex(const uint8_t* d, uint16_t len)      { g_sysex.emplace_back(d, d + len); }
 extern "C" void on_midi_note_on(uint8_t ch, uint8_t n, uint8_t v)  { g_note.push_back({ch, n, v}); }
+extern "C" void on_midi_note_off(uint8_t ch, uint8_t n, uint8_t v) { g_note_off.push_back({ch, n, v}); }
 extern "C" void on_midi_clock()                                    { ++g_clock; }
 extern "C" void on_midi_clock_reset()                              { ++g_clock_reset; }
 
@@ -65,6 +67,7 @@ void setUp(void) {
     g_cc.clear();
     g_pc.clear();
     g_note.clear();
+    g_note_off.clear();
     g_sysex.clear();
     g_clock = g_clock_reset = 0;
     // Reset the file-static parser state (visible here because we #include the .cpp)
@@ -105,12 +108,14 @@ void test_running_status_repeats_last_status(void) {
 }
 
 void test_note_on_and_velocity_zero_is_note_off(void) {
-    feed_uart({0x90, 0x3C, 0x64});   // note on, vel 100 -> dispatched
+    feed_uart({0x90, 0x3C, 0x64});   // note on, vel 100 -> dispatched as note on
     TEST_ASSERT_EQUAL_INT(1, (int)g_note.size());
     TEST_ASSERT_EQUAL_UINT8(0x3C, g_note[0].note);
     TEST_ASSERT_EQUAL_UINT8(0x64, g_note[0].vel);
-    feed_uart({0x90, 0x3C, 0x00});   // note on, vel 0 == note off -> NOT dispatched
+    feed_uart({0x90, 0x3C, 0x00});   // note on, vel 0 == note off -> the note-off callback
     TEST_ASSERT_EQUAL_INT(1, (int)g_note.size());
+    TEST_ASSERT_EQUAL_INT(1, (int)g_note_off.size());
+    TEST_ASSERT_EQUAL_UINT8(0x3C, g_note_off[0].note);
 }
 
 void test_program_change_single_data_byte(void) {
@@ -204,6 +209,16 @@ void test_bare_data_byte_without_status_is_ignored(void) {
     TEST_ASSERT_EQUAL_INT(0, (int)g_note.size());
 }
 
+// The 0x80 spelling reaches the same callback, carrying its release velocity, so a
+// product tracking note lifetimes never has to know which spelling a keyboard sends.
+void test_note_off_status_byte_dispatches(void) {
+    feed_uart({0x80, 0x40, 0x20});
+    TEST_ASSERT_EQUAL_INT(0, (int)g_note.size());
+    TEST_ASSERT_EQUAL_INT(1, (int)g_note_off.size());
+    TEST_ASSERT_EQUAL_UINT8(0x40, g_note_off[0].note);
+    TEST_ASSERT_EQUAL_UINT8(0x20, g_note_off[0].vel);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_cc_dispatch_on_matching_channel);
@@ -211,6 +226,7 @@ int main(int, char**) {
     RUN_TEST(test_omni_accepts_any_channel);
     RUN_TEST(test_running_status_repeats_last_status);
     RUN_TEST(test_note_on_and_velocity_zero_is_note_off);
+    RUN_TEST(test_note_off_status_byte_dispatches);
     RUN_TEST(test_program_change_single_data_byte);
     RUN_TEST(test_realtime_clock_mid_message_does_not_corrupt);
     RUN_TEST(test_realtime_clock_inside_sysex_passes_through);

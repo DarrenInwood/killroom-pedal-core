@@ -10,6 +10,10 @@
 //   on_midi_program_change(channel, prog)   on_midi_clock()
 //   on_midi_sysex(data, len)                on_midi_clock_reset()
 //
+// A seventh, on_midi_note_off(channel, note, vel), is weak with an empty default: a
+// product that tracks note lifetimes overrides it, and one that does not links without
+// naming it. Both spellings of note off -- 0x80, and 0x90 with velocity 0 -- arrive there.
+//
 // A product with no use for notes or the MIDI-clock tempo layer defines those
 // three as empty bodies; the parser still consumes the bytes, so the wire
 // behaviour (including Thru) is identical either way. SYSEX_RX_BUF comes from
