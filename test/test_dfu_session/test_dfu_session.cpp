@@ -92,11 +92,11 @@ static std::vector<uint8_t> begin_payload(uint32_t size)
     return pack7(sz, 4);
 }
 
-// Mirrors the host updater's encoder (modulation_v2 tools/updater.html): the
+// Mirrors the host's encoder (the editor's dfu/protocol.ts buildChunk): the
 // address as four 7-bit groups, then the ENCODED length as two. Building
-// frames the way the shipped host builds them is the point -- the previous
-// version of this helper emitted raw 8-bit bytes, which is why every test
-// passed against a frame the wire cannot carry.
+// frames the way the shipped host builds them is the point -- a helper that
+// emits raw 8-bit bytes passes every test against a frame the wire cannot
+// carry.
 static std::vector<uint8_t> chunk_payload(uint32_t addr, const uint8_t* data, uint16_t len)
 {
     const std::vector<uint8_t> enc = pack7(data, len);
