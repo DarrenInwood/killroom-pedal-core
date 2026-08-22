@@ -1,7 +1,7 @@
 // Host-native unit tests for the ADC exponential-moving-average filter
 // (drivers/adc_filter.hpp).
 //
-// This fixed-point 1/64-alpha smoother runs on every knob/pedal sample in
+// This fixed-point smoother runs on every knob/pedal sample in
 // adc.cpp's update_all(). It lives in a header-only, CMSIS-free helper
 // (drivers/adc_filter.hpp) so these tests can pin the midpoint seed, steady-state
 // convergence, lag, and overflow safety.
@@ -61,8 +61,27 @@ void test_no_overflow_at_full_scale(void) {
     TEST_ASSERT_EQUAL_UINT16(4095u, adc_filter::step(acc, 4095u));
 }
 
+// A caller-chosen shift scales both halves of the trade together: the accumulator is
+// scaled by that shift, the fixed point still holds, and a smaller shift reaches the
+// target in fewer samples. A driver whose front end has already removed most of the
+// noise picks one and gets the shorter settle.
+void test_shift_is_caller_chosen(void) {
+    uint32_t acc = adc_filter::seed<2>(2048u);
+    TEST_ASSERT_EQUAL_UINT32(2048u << 2, acc);
+    TEST_ASSERT_EQUAL_UINT16(2048u, adc_filter::step<2>(acc, 2048u));   // still a fixed point
+
+    // Samples taken to come within one code of a full-scale step, at two shifts.
+    int fast = 0, slow = 0;
+    uint32_t a2 = adc_filter::seed<2>(0u);
+    while (adc_filter::step<2>(a2, 4095u) < 4094u && fast < 10000) ++fast;
+    uint32_t a6 = adc_filter::seed<>(0u);
+    while (adc_filter::step<>(a6, 4095u) < 4094u && slow < 10000) ++slow;
+    TEST_ASSERT_TRUE(fast < slow);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
+    RUN_TEST(test_shift_is_caller_chosen);
     RUN_TEST(test_seed_is_steady_state);
     RUN_TEST(test_converges_and_lags_upward);
     RUN_TEST(test_converges_downward);
