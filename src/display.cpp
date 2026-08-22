@@ -19,6 +19,19 @@
 #define DISPLAY_SSD1309 1   // default controller for an un-flagged build
 #endif
 
+// Panel orientation. Segment remap chooses which end of a row is column 0; COM scan direction
+// chooses which end of the column stack is row 0. A 180° rotation needs both of them: flipping
+// one alone mirrors the image instead of turning it. All three controllers encode the pair the
+// same way, so one definition serves them all. A product whose panel is mounted inverted builds
+// with -D DISPLAY_ROTATE_180.
+#ifdef DISPLAY_ROTATE_180
+static constexpr uint8_t SEG_REMAP = 0xA0;   // column 0   = SEG0
+static constexpr uint8_t COM_SCAN  = 0xC0;   // COM0       = row 0
+#else
+static constexpr uint8_t SEG_REMAP = 0xA1;   // column 127 = SEG0
+static constexpr uint8_t COM_SCAN  = 0xC8;   // COM[N-1]   = row 0
+#endif
+
 #if defined(DISPLAY_ST7567)
 // ST7567 is a page-addressing LCD: its RAM is 132 columns wide, so the visible
 // 128-pixel window is reached through a small column offset. Tune COL_OFFSET
@@ -31,8 +44,8 @@ static constexpr uint8_t COL_OFFSET      = ST7567_COL_OFFSET;
 static const uint8_t init_seq[] = {
     0xE2,        // soft reset
     0xA2,        // bias 1/9
-    0xA1,        // ADC reverse (segment remap, matches the SSD130x orientation)
-    0xC8,        // COM output scan direction (remapped)
+    SEG_REMAP,   // ADC direction — the ST7567's segment remap, matching the SSD130x
+    COM_SCAN,    // COM output scan direction — pairs with the remap
     0x40,        // display start line = 0
     0x2C,        // power control: booster on
     0x2E,        // power control: booster + voltage regulator on
@@ -59,8 +72,8 @@ static const uint8_t init_seq[] = {
     0x40,        // display start line = 0
     0x8D, 0x14,  // charge pump enable (internal VCC)
     0x20, 0x00,  // horizontal addressing mode
-    0xA1,        // segment remap (column 127 = SEG0)
-    0xC8,        // COM output scan direction (remapped)
+    SEG_REMAP,   // segment remap — see DISPLAY_ROTATE_180 above
+    COM_SCAN,    // COM output scan direction — pairs with the remap
     0xDA, 0x12,  // COM pins hardware config (alt, no left-right remap)
     0x81, 0xCF,  // contrast (typical for internal-VCC operation)
     0xD9, 0xF1,  // pre-charge period (phase1=1, phase2=15 — charge-pump default)
@@ -84,8 +97,8 @@ static const uint8_t init_seq[] = {
     0xD3, 0x00,  // display offset = 0
     0x40,        // display start line = 0
     0x20, 0x00,  // horizontal addressing mode
-    0xA1,        // segment remap (column 127 = SEG0)
-    0xC8,        // COM output scan direction (remapped)
+    SEG_REMAP,   // segment remap — see DISPLAY_ROTATE_180 above
+    COM_SCAN,    // COM output scan direction — pairs with the remap
     0xDA, 0x12,  // COM pins hardware config (alt, no left-right remap)
     0x81, 0xFF,  // contrast (0xFF = maximum; SSD1309 external VCC supports full range)
     0xD9, 0x22,  // pre-charge period (phase1=2, phase2=2 DCLKs — no charge pump)
