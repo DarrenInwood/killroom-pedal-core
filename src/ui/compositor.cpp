@@ -310,21 +310,48 @@ void Compositor::draw_normal()
 // Transient overlays
 // ---------------------------------------------------------------------------
 
-// Full-screen parameter focus card shown briefly on a knob edit.
-void Compositor::draw_focus_card()
+// The parameter focus panel a knob edit pops: a blind that unrolls downward from
+// PANEL_Y over the performance grid, giving the parameter its full name and a 17px
+// value. The header and context row above it are never touched, so an edit reads as a
+// zoom into one parameter rather than a change of screen — the player keeps the preset,
+// the algorithm and the page in view throughout.
+//
+// `prog` (0..256) is the shared overlay ramp. Only the rows the blind has reached are
+// cleared, so the screen below the edge keeps showing through, and a text element is
+// drawn only once the blind has passed its last row: there is no vertical clip
+// primitive, so a half-revealed glyph would render whole and overhang the edge. The
+// gauge takes an explicit height, so it grows out from under the blind instead.
+void Compositor::draw_focus_panel(uint16_t prog)
 {
-    display::clear();
-    display::draw_text(display::FONT_TEXT, 4, 3, m_card_name);
-    display::draw_hline(RULE_Y);
+    constexpr uint8_t BAND_H = (uint8_t)(OLED_HEIGHT - PANEL_Y);
+    const uint8_t h      = (uint8_t)(1u + ((BAND_H - 1u) * prog) / 256u);  // 1 .. BAND_H
+    const uint8_t bottom = (uint8_t)(PANEL_Y + h);                         // exclusive
 
-    char cv[16];
-    to_display(cv, m_card_val, sizeof(cv) - 1u, false);
-    const uint8_t vw = display::text_width(display::FONT_NAME, cv);
-    const uint8_t vx = (vw < OLED_WIDTH) ? (uint8_t)((OLED_WIDTH - vw) / 2u) : 0u;
-    display::draw_text(display::FONT_NAME, vx, 24, cv);
+    display::fill_rect(0, PANEL_Y, OLED_WIDTH, h, false);
+    display::draw_hline(PANEL_Y);
 
-    if (m_card_bar != NO_BAR)
-        display::draw_gauge(8, 50, (uint8_t)(OLED_WIDTH - 16u), 8u, gauge_of(m_card_bar));
+    // The panel spans the full width, so the name needs none of the grid's abbreviations.
+    if (bottom >= PANEL_NAME_Y + display::FONT_TEXT.height) {
+        char nm[sizeof(m_card_name)];
+        fit(display::FONT_TEXT, m_card_name, (uint8_t)(OLED_WIDTH - 6u), nm, sizeof(nm));
+        display::draw_text(display::FONT_TEXT, 3, PANEL_NAME_Y, nm);
+    }
+
+    if (bottom >= PANEL_VAL_Y + display::FONT_NAME.height) {
+        char cv[16];
+        to_display(cv, m_card_val, sizeof(cv) - 1u, false);
+        const uint8_t vw = display::text_width(display::FONT_NAME, cv);
+        const uint8_t vx = (vw < OLED_WIDTH) ? (uint8_t)((OLED_WIDTH - vw) / 2u) : 0u;
+        display::draw_text(display::FONT_NAME, vx, PANEL_VAL_Y, cv);
+    }
+
+    // Below 3px the outline swallows the fill and the gauge reads as a plain line.
+    if (m_card_bar != NO_BAR && bottom >= PANEL_GAUGE_Y + 3u) {
+        const uint8_t avail = (uint8_t)(bottom - PANEL_GAUGE_Y);
+        const uint8_t gh    = (avail < PANEL_GAUGE_H) ? avail : PANEL_GAUGE_H;
+        display::draw_gauge(4, PANEL_GAUGE_Y, (uint8_t)(OLED_WIDTH - 8u), gh,
+                            gauge_of(m_card_bar));
+    }
 }
 
 // A system message over the normal screen. The default is a centered box that grows from a
@@ -348,16 +375,6 @@ void Compositor::draw_banner(uint16_t prog)
     rect_outline(x, y, w, h);
     if (prog >= 200u)
         display::draw_text(display::FONT_TEXT, (uint8_t)(x + 5u), 29u, m_banner);
-}
-
-// Keep only a horizontal band of half-height `half` centered on the screen (an iris
-// open/close for the focus card); `half` 32 leaves the whole frame.
-void Compositor::band_clip(uint8_t half)
-{
-    if (half >= 32u) return;
-    const uint8_t top = (uint8_t)(32u - half);
-    display::fill_rect(0, 0, OLED_WIDTH, top, false);
-    display::fill_rect(0, (uint8_t)(32u + half), OLED_WIDTH, (uint8_t)(32u - half), false);
 }
 
 // A 2px-thick checkmark with its corner near (x, y).
@@ -411,20 +428,17 @@ bool Compositor::overlay_animating(uint32_t elapsed) const
     return elapsed < ANIM_MS || elapsed >= DISPLAY_PARAM_SHOW_MS - ANIM_MS;
 }
 
-// Compose the frame for this tick: a save animation, an animated focus card / banner
-// over the normal screen, or just the normal screen.
+// Compose the frame for this tick: the save animation owns the whole screen; the focus
+// panel and the banner are drawn over the normal screen (or over whichever product screen
+// draw_normal() dispatched to), so what they do not cover stays on view.
 void Compositor::draw_frame(uint32_t now)
 {
     m_icon_now = now;  // drives the header icon animation
     const uint32_t elapsed = (m_overlay != Overlay::None) ? (now - m_overlay_start_ms) : 0u;
     if (m_overlay == Overlay::Save) { draw_save(elapsed); return; }
-    if (m_overlay == Overlay::Card) {
-        draw_focus_card();
-        band_clip((uint8_t)(overlay_prog(elapsed) * 32u / 256u));
-        return;
-    }
     draw_normal();
-    if (m_overlay == Overlay::Banner) draw_banner(overlay_prog(elapsed));
+    if      (m_overlay == Overlay::Card)   draw_focus_panel(overlay_prog(elapsed));
+    else if (m_overlay == Overlay::Banner) draw_banner(overlay_prog(elapsed));
 }
 
 // ---------------------------------------------------------------------------
@@ -612,10 +626,10 @@ void Compositor::show_param_change(const char* name, const char* value, uint16_t
     m_card_val[sizeof(m_card_val) - 1] = '\0';
     m_card_bar         = bar;
 
-    // The open iris animates only when the card first appears. If it is already showing (a
-    // stream of knob updates), start the clock ANIM_MS in so `elapsed` lands past the open
-    // ramp — the value and the dismiss timer refresh, but the open doesn't replay. The close
-    // ramp still plays once updates stop and `elapsed` reaches the tail of DISPLAY_PARAM_SHOW_MS.
+    // The panel unrolls only when it first appears. If it is already showing (a stream of
+    // knob updates), start the clock ANIM_MS in so `elapsed` lands past the open ramp — the
+    // value and the dismiss timer refresh, but the unroll doesn't replay. The roll-up still
+    // plays once updates stop and `elapsed` reaches the tail of DISPLAY_PARAM_SHOW_MS.
     const bool already_open = (m_overlay == Overlay::Card);
     m_overlay          = Overlay::Card;
     m_overlay_start_ms = already_open ? (systick::now_ms() - ANIM_MS) : systick::now_ms();
@@ -634,9 +648,9 @@ void Compositor::begin_slide(int8_t dir)
     // Skip while a splash or another slide is in flight; capture the current frame as the
     // "from" and let the next update() render and slide in the "to".
     if (m_splash_expiry_ms != 0 || m_slide_active || m_slide_pending) return;
-    // If a transient overlay (the param focus card / a banner) is open, close it now and
+    // If a transient overlay (the param focus panel / a banner) is open, close it now and
     // re-render the underlying screen so the slide captures that, not the overlay. Otherwise
-    // the card would animate as part of the slide and then pop back on top of the new screen
+    // the panel would animate as part of the slide and then pop back on top of the new screen
     // (m_overlay is still timed out). The state behind it is still current here — begin_slide
     // runs before the algorithm/preset/page actually changes — so this captures the correct
     // "from" frame and the user sees a clean slide to the new screen.

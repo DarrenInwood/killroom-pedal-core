@@ -61,7 +61,7 @@ namespace display {
     void fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool on);
 
     // A value bar: a 1px outline track (w×h) with a left-anchored fill proportional
-    // to v (0..127). For the param gauges and the editing focus card.
+    // to v (0..127). For the param gauges and the editing focus panel.
     void draw_gauge(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t v);
 
     // Blit a small column-major bitmap: w columns, each (h+7)/8 bytes, bit0 = top

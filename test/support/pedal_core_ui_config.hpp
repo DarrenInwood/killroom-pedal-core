@@ -16,7 +16,7 @@ inline constexpr uint32_t FOOTSWITCH_HOLD_MS     = 600u;
 // the largest frame the product accepts.
 inline constexpr uint16_t SYSEX_RX_BUF = 512u;
 
-// Transient-overlay dwell (ui/compositor.cpp): how long the param focus card
+// Transient-overlay dwell (ui/compositor.cpp): how long the param focus panel
 // and system banners stay up.
 inline constexpr uint32_t DISPLAY_PARAM_SHOW_MS = 750u;
 

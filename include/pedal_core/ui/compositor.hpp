@@ -6,7 +6,8 @@
 // The family compositor: one full-frame redraw of the performance screen from
 // current state, a pacing state machine (idle cap, animation cadence, slide
 // transitions, splash and fault holds), and the transient overlays (the param
-// focus card with its iris, the growing-box banner, the save animation).
+// focus panel that unrolls over the grid, the growing-box banner, the save
+// animation).
 //
 // A product subclasses it with a LayoutSpec (how many knob columns, how wide)
 // and a handful of hooks: its animated header icon, its param-name
@@ -128,6 +129,14 @@ protected:
     static constexpr uint8_t HINT_Y  = 58u;
     static constexpr uint8_t TITLE_Y = 1u, TITLE_RULE_Y = 13u;
 
+    // The param focus panel: a blind that unrolls over the grid, leaving the header
+    // and context row in place so an edit never costs the player their bearings.
+    static constexpr uint8_t PANEL_Y       = 26u;  // separator rule; the panel owns 26..63
+    static constexpr uint8_t PANEL_NAME_Y  = 28u;  // FONT_TEXT (11px) -> 28..38
+    static constexpr uint8_t PANEL_VAL_Y   = 40u;  // FONT_NAME (17px) -> 40..56
+    static constexpr uint8_t PANEL_GAUGE_Y = 58u;
+    static constexpr uint8_t PANEL_GAUGE_H = 6u;   // -> 58..63, flush to the bottom edge
+
     // The ± glyph occupies the slot just past '~' in every font.
     static constexpr char GLYPH_PM = (char)0x7F;
 
@@ -151,7 +160,7 @@ private:
     void draw_header(uint32_t now);
     void draw_context_line();
     void draw_param_grid();
-    void draw_focus_card();
+    void draw_focus_panel(uint16_t prog);
     void draw_banner(uint16_t prog);
     void draw_save(uint32_t elapsed);
     void draw_frame(uint32_t now);
@@ -159,7 +168,6 @@ private:
     uint16_t overlay_prog(uint32_t elapsed) const;
     uint32_t overlay_total() const;
     bool overlay_animating(uint32_t elapsed) const;
-    static void band_clip(uint8_t half);
     static void draw_check(uint8_t x, uint8_t y);
 
     // Pacing.
