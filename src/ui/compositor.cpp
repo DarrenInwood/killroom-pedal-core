@@ -311,10 +311,11 @@ void Compositor::draw_normal()
 // ---------------------------------------------------------------------------
 
 // The parameter focus panel a knob edit pops: a blind that unrolls downward from
-// PANEL_Y over the performance grid, giving the parameter its full name and a 17px
-// value. The header and context row above it are never touched, so an edit reads as a
-// zoom into one parameter rather than a change of screen — the player keeps the preset,
-// the algorithm and the page in view throughout.
+// PANEL_Y over whatever draw_frame() has already rendered, giving the parameter its full
+// name and a 17px value. Everything above PANEL_Y is left alone, so an edit reads as a
+// zoom into one parameter rather than a change of screen: on the performance screen the
+// player keeps the preset, the algorithm and the page in view throughout, and over a
+// product screen the panel leaves that page's title bar showing.
 //
 // `prog` (0..256) is the shared overlay ramp. Only the rows the blind has reached are
 // cleared, so the screen below the edge keeps showing through, and a text element is
@@ -332,25 +333,23 @@ void Compositor::draw_focus_panel(uint16_t prog)
 
     // The panel spans the full width, so the name needs none of the grid's abbreviations.
     if (bottom >= PANEL_NAME_Y + display::FONT_TEXT.height) {
-        char nm[sizeof(m_card_name)];
-        fit(display::FONT_TEXT, m_card_name, (uint8_t)(OLED_WIDTH - 6u), nm, sizeof(nm));
+        char nm[sizeof(m_panel_name)];
+        fit(display::FONT_TEXT, m_panel_name, (uint8_t)(OLED_WIDTH - 6u), nm, sizeof(nm));
         display::draw_text(display::FONT_TEXT, 3, PANEL_NAME_Y, nm);
     }
 
     if (bottom >= PANEL_VAL_Y + display::FONT_NAME.height) {
         char cv[16];
-        to_display(cv, m_card_val, sizeof(cv) - 1u, false);
-        const uint8_t vw = display::text_width(display::FONT_NAME, cv);
-        const uint8_t vx = (vw < OLED_WIDTH) ? (uint8_t)((OLED_WIDTH - vw) / 2u) : 0u;
-        display::draw_text(display::FONT_NAME, vx, PANEL_VAL_Y, cv);
+        to_display(cv, m_panel_val, sizeof(cv) - 1u, false);
+        draw_centered(display::FONT_NAME, 0, OLED_WIDTH, PANEL_VAL_Y, cv);
     }
 
     // Below 3px the outline swallows the fill and the gauge reads as a plain line.
-    if (m_card_bar != NO_BAR && bottom >= PANEL_GAUGE_Y + 3u) {
+    if (m_panel_bar != NO_BAR && bottom >= PANEL_GAUGE_Y + 3u) {
         const uint8_t avail = (uint8_t)(bottom - PANEL_GAUGE_Y);
         const uint8_t gh    = (avail < PANEL_GAUGE_H) ? avail : PANEL_GAUGE_H;
         display::draw_gauge(4, PANEL_GAUGE_Y, (uint8_t)(OLED_WIDTH - 8u), gh,
-                            gauge_of(m_card_bar));
+                            gauge_of(m_panel_bar));
     }
 }
 
@@ -437,7 +436,7 @@ void Compositor::draw_frame(uint32_t now)
     const uint32_t elapsed = (m_overlay != Overlay::None) ? (now - m_overlay_start_ms) : 0u;
     if (m_overlay == Overlay::Save) { draw_save(elapsed); return; }
     draw_normal();
-    if      (m_overlay == Overlay::Card)   draw_focus_panel(overlay_prog(elapsed));
+    if      (m_overlay == Overlay::Panel)   draw_focus_panel(overlay_prog(elapsed));
     else if (m_overlay == Overlay::Banner) draw_banner(overlay_prog(elapsed));
 }
 
@@ -620,18 +619,18 @@ void Compositor::show_message(const char* msg, MsgPos pos)
 
 void Compositor::show_param_change(const char* name, const char* value, uint16_t bar)
 {
-    strncpy(m_card_name, name, sizeof(m_card_name) - 1);
-    m_card_name[sizeof(m_card_name) - 1] = '\0';
-    strncpy(m_card_val, value, sizeof(m_card_val) - 1);
-    m_card_val[sizeof(m_card_val) - 1] = '\0';
-    m_card_bar         = bar;
+    strncpy(m_panel_name, name, sizeof(m_panel_name) - 1);
+    m_panel_name[sizeof(m_panel_name) - 1] = '\0';
+    strncpy(m_panel_val, value, sizeof(m_panel_val) - 1);
+    m_panel_val[sizeof(m_panel_val) - 1] = '\0';
+    m_panel_bar         = bar;
 
     // The panel unrolls only when it first appears. If it is already showing (a stream of
     // knob updates), start the clock ANIM_MS in so `elapsed` lands past the open ramp — the
     // value and the dismiss timer refresh, but the unroll doesn't replay. The roll-up still
     // plays once updates stop and `elapsed` reaches the tail of DISPLAY_PARAM_SHOW_MS.
-    const bool already_open = (m_overlay == Overlay::Card);
-    m_overlay          = Overlay::Card;
+    const bool already_open = (m_overlay == Overlay::Panel);
+    m_overlay          = Overlay::Panel;
     m_overlay_start_ms = already_open ? (systick::now_ms() - ANIM_MS) : systick::now_ms();
     m_dirty            = true;
 }

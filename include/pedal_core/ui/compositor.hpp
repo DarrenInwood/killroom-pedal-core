@@ -131,7 +131,12 @@ protected:
 
     // The param focus panel: a blind that unrolls over the grid, leaving the header
     // and context row in place so an edit never costs the player their bearings.
-    static constexpr uint8_t PANEL_Y       = 26u;  // separator rule; the panel owns 26..63
+    //
+    // PANEL_Y clears the deepest row any screen's first text line reaches: a product page
+    // drawing FONT_TEXT at y=16 fills rows 16..26, so a rule one row higher would shave the
+    // descenders off its top line. The performance grid's own name row starts painting at
+    // y=28, so nothing above the rule is lost there either.
+    static constexpr uint8_t PANEL_Y       = 27u;  // separator rule; the panel owns 27..63
     static constexpr uint8_t PANEL_NAME_Y  = 28u;  // FONT_TEXT (11px) -> 28..38
     static constexpr uint8_t PANEL_VAL_Y   = 40u;  // FONT_NAME (17px) -> 40..56
     static constexpr uint8_t PANEL_GAUGE_Y = 58u;
@@ -180,12 +185,12 @@ private:
     static constexpr uint32_t SPLASH_MS      = 2000u;
     static constexpr uint32_t FAULT_HOLD_MS  = 2500u;
 
-    enum class Overlay : uint8_t { None, Card, Banner, Save };
+    enum class Overlay : uint8_t { None, Panel, Banner, Save };
     Overlay  m_overlay = Overlay::None;
     uint32_t m_overlay_start_ms = 0;
-    char     m_card_name[16] = {};
-    char     m_card_val [16] = {};
-    uint16_t m_card_bar = NO_BAR;
+    char     m_panel_name[16] = {};
+    char     m_panel_val [16] = {};
+    uint16_t m_panel_bar = NO_BAR;
     char     m_banner[32] = {};
     bool     m_banner_bottom = false;
 
