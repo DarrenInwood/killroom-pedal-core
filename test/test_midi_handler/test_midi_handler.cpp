@@ -21,6 +21,8 @@ namespace uart {
     bool read(uint8_t& b) { if (g_rx.empty()) return false; b = g_rx.front(); g_rx.pop_front(); return true; }
     void write(uint8_t b) { g_thru.push_back(b); }
 }
+namespace systick { void fake_set_ms(uint32_t); void fake_advance_ms(uint32_t); }
+
 namespace usb_midi {
     static std::deque<uint8_t>  g_rx;
     static std::vector<uint8_t> g_tx;         // messages the router put on USB
@@ -84,6 +86,9 @@ void setUp(void) {
     usb_midi::g_tx_sysex.clear();
     s_din_locked = false;
     s_din_queued = 0;
+    s_din_fed_ms = 0;
+    s_generating_clock = false;
+    systick::fake_set_ms(0u);
     s_sysex_always     = nullptr;
     s_sysex_always_len = 0;
     midi_handler::set_config(midi_handler::Config{});   // every default is today's behaviour
@@ -428,6 +433,79 @@ void test_omni_does_not_move_the_transmit_channel(void) {
     TEST_ASSERT_EQUAL_INT(1, (int)g_cc.size());
 }
 
+
+// A frame that stops coming must give the jack back. The case is an unplugged
+// cable mid-dump: the lock is held by a sender that will never send its F7, and
+// without the stall timeout everything the pedal says queues behind it forever.
+void test_a_stalled_sysex_gives_the_jack_back(void) {
+    feed_uart({0xF0, 0x7D, 0x01, 0x11});     // a dump starts, then the cable goes
+    uart::g_thru.clear();
+
+    const uint8_t own[3] = {0xB0, 0x0F, 0x02};
+    midi_handler::send_own(own, 3);
+    TEST_ASSERT_EQUAL_INT(0, (int)uart::g_thru.size());   // still held, correctly
+
+    systick::fake_advance_ms(1000u);
+    midi_handler::update();                  // no new bytes; the stall is noticed here
+
+    // The forwarded copy is closed with an EOX so the downstream parser is not left
+    // holding a frame that never ends, and the waiting message follows it out.
+    TEST_ASSERT_EQUAL_INT(4, (int)uart::g_thru.size());
+    TEST_ASSERT_EQUAL_UINT8(0xF7, uart::g_thru[0]);
+    TEST_ASSERT_EQUAL_UINT8(0xB0, uart::g_thru[1]);
+
+    // And the jack is free for what comes next.
+    uart::g_thru.clear();
+    midi_handler::send_own(own, 3);
+    TEST_ASSERT_EQUAL_INT(3, (int)uart::g_thru.size());
+}
+
+// A host that merely paused still gets its frame understood: the timeout abandons
+// the pass-through copy, never the parse.
+void test_a_stall_abandons_the_copy_not_the_parse(void) {
+    feed_uart({0xF0, 0x7D, 0x01, 0x70});
+    systick::fake_advance_ms(1000u);
+    midi_handler::update();
+    uart::g_thru.clear();
+
+    feed_uart({0xF7});                       // the rest of the frame turns up late
+    TEST_ASSERT_EQUAL_INT(1, (int)g_sysex.size());
+    TEST_ASSERT_EQUAL_UINT8(0x70, g_sysex[0][3]);
+    TEST_ASSERT_EQUAL_INT(0, (int)uart::g_thru.size());   // but not forwarded twice
+}
+
+// A frame that is still arriving keeps the jack however long it runs -- the
+// timeout measures silence, not duration.
+void test_a_slow_frame_keeps_the_jack(void) {
+    feed_uart({0xF0, 0x7D});
+    for (int i = 0; i < 5; ++i) {
+        systick::fake_advance_ms(900u);      // under the stall, every time
+        feed_uart({0x01});
+    }
+    uart::g_thru.clear();
+    const uint8_t own[3] = {0xB0, 0x0F, 0x02};
+    midi_handler::send_own(own, 3);
+    TEST_ASSERT_EQUAL_INT(0, (int)uart::g_thru.size());   // still the frame's jack
+}
+
+// Two clocks on one wire read as neither, so the generator wins over the echo
+// while it is actually ticking -- whatever clock_thru says.
+void test_the_generated_clock_displaces_the_forwarded_one(void) {
+    feed_uart({0xF8});
+    TEST_ASSERT_EQUAL_INT(1, (int)uart::g_thru.size());   // clock_thru is on by default
+
+    uart::g_thru.clear();
+    midi_handler::set_generating_clock(true);
+    feed_uart({0xF8});
+    TEST_ASSERT_EQUAL_INT(0, (int)uart::g_thru.size());
+    TEST_ASSERT_EQUAL_INT(2, g_clock);                    // still drives the tempo layer
+
+    // And it comes back when the pedal stops being the master.
+    midi_handler::set_generating_clock(false);
+    feed_uart({0xF8});
+    TEST_ASSERT_EQUAL_INT(1, (int)uart::g_thru.size());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_cc_dispatch_on_matching_channel);
@@ -460,5 +538,9 @@ int main(int, char**) {
     RUN_TEST(test_rx_sysex_off_drops_frames_but_keeps_the_named_commands);
     RUN_TEST(test_tx_channel_follows_rx_until_one_is_set);
     RUN_TEST(test_omni_does_not_move_the_transmit_channel);
+    RUN_TEST(test_a_stalled_sysex_gives_the_jack_back);
+    RUN_TEST(test_a_stall_abandons_the_copy_not_the_parse);
+    RUN_TEST(test_a_slow_frame_keeps_the_jack);
+    RUN_TEST(test_the_generated_clock_displaces_the_forwarded_one);
     return UNITY_END();
 }

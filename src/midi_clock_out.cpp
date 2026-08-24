@@ -45,6 +45,13 @@ void arm(uint32_t now_ms)
     advance();
 }
 
+// Tell the router whether a clock is coming from here, so it can drop the one
+// arriving at the input rather than letting both onto the jack.
+void publish_generating()
+{
+    midi_handler::set_generating_clock(s_enabled && s_running);
+}
+
 }  // namespace
 
 void midi_clock_out::init()
@@ -53,6 +60,7 @@ void midi_clock_out::init()
     s_running = false;
     s_armed   = false;
     set_interval_from_bpm(BPM_DEFAULT);
+    publish_generating();
 }
 
 void midi_clock_out::set_enabled(bool on)
@@ -60,6 +68,7 @@ void midi_clock_out::set_enabled(bool on)
     if (on == s_enabled) return;
     s_enabled = on;
     s_armed   = false;   // a fresh schedule on the next poll
+    publish_generating();
 }
 
 void midi_clock_out::set_bpm(float bpm)
@@ -74,6 +83,7 @@ void midi_clock_out::set_running(bool running)
     if (running == s_running) return;
     s_running = running;
     s_armed   = false;
+    publish_generating();
 }
 
 void midi_clock_out::poll(uint32_t now_ms)

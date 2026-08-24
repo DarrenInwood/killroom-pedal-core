@@ -16,7 +16,9 @@
 // --- recording stub for the router call under test -------------------------
 namespace midi_handler {
     static std::vector<uint8_t> g_sent;
+    static bool g_generating = false;
     void send_own_realtime(uint8_t status) { g_sent.push_back(status); }
+    void set_generating_clock(bool on) { g_generating = on; }
 }
 
 #include "../../src/midi_clock_out.cpp"
@@ -149,8 +151,29 @@ void test_bpm_is_clamped_to_the_family_range(void) {
     TEST_ASSERT_EQUAL_UINT32(midi_clock_out::interval_ms(), slow);
 }
 
+// The router drops an inbound clock while the pedal is generating one, so the
+// generator has to say when that is -- both halves of it, since being enabled
+// without being the master produces nothing.
+void test_it_tells_the_router_when_it_is_generating(void) {
+    TEST_ASSERT_FALSE(midi_handler::g_generating);
+
+    midi_clock_out::set_enabled(true);
+    TEST_ASSERT_FALSE(midi_handler::g_generating);   // enabled, but not the master
+
+    midi_clock_out::set_running(true);
+    TEST_ASSERT_TRUE(midi_handler::g_generating);
+
+    midi_clock_out::set_running(false);              // slaved to an incoming clock
+    TEST_ASSERT_FALSE(midi_handler::g_generating);
+
+    midi_clock_out::set_running(true);
+    midi_clock_out::set_enabled(false);              // switched off
+    TEST_ASSERT_FALSE(midi_handler::g_generating);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
+    RUN_TEST(test_it_tells_the_router_when_it_is_generating);
     RUN_TEST(test_silent_until_enabled_and_running);
     RUN_TEST(test_stops_when_it_is_no_longer_the_master);
     RUN_TEST(test_sends_the_clock_byte_only);

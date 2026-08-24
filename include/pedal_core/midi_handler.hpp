@@ -93,4 +93,10 @@ namespace midi_handler {
     // can never lock an editor out: identity, the global-settings query, and
     // whatever command turns it back on. The product names the last of those.
     void set_sysex_always_accepted(const uint8_t* cmds, uint8_t count);
+
+    // True while the pedal is generating its own MIDI clock. An inbound clock is
+    // not forwarded while it is, whatever clock_thru says: exactly one clock
+    // leaves the jack, which is an invariant rather than a setting a player has to
+    // get right. midi_clock_out keeps this current.
+    void set_generating_clock(bool on);
 }

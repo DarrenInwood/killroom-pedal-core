@@ -28,6 +28,9 @@ static midi_handler::Config s_config;
 static const uint8_t* s_sysex_always     = nullptr;
 static uint8_t        s_sysex_always_len = 0;
 
+// Set by midi_clock_out while it is actually ticking.
+static bool s_generating_clock = false;
+
 // Which stream a byte belongs to. `Self` is the pedal's own outbound traffic,
 // which contends for the DIN jack with an inbound echo exactly as the two
 // inbound streams contend with each other.
@@ -66,8 +69,17 @@ namespace {
 
 constexpr uint16_t DIN_QUEUE_BYTES = 128;  // one preset dump, comfortably
 
+// How long a streaming frame may go quiet before the jack is taken back. A DIN
+// sender is a UART pushing bytes 320 us apart and a host's packets are far closer
+// together than this, so only a frame that has stopped coming trips it -- an
+// unplugged cable mid-dump being the case that matters. Without it the lock
+// outlives the frame and the pedal's own output is silent until a fresh status
+// byte arrives on that stream, which never happens if the cable is out.
+constexpr uint32_t DIN_STALL_MS = 1000u;
+
 bool     s_din_locked = false;
 Src      s_din_owner  = Src::Uart;
+uint32_t s_din_fed_ms = 0;      // when the owning frame last produced a byte
 uint8_t  s_din_queue[DIN_QUEUE_BYTES];
 uint16_t s_din_queued = 0;
 
@@ -122,7 +134,15 @@ bool din_sysex_begin(Src src)
     if (s_din_locked) return false;
     s_din_locked = true;
     s_din_owner  = src;
+    s_din_fed_ms = systick::now_ms();
     return true;
+}
+
+// One byte of the frame that holds the jack, which also says the frame is alive.
+void din_sysex_byte(uint8_t b)
+{
+    uart::write(b);
+    s_din_fed_ms = systick::now_ms();
 }
 
 void din_sysex_end(Src src, bool write_eox)
@@ -131,6 +151,12 @@ void din_sysex_end(Src src, bool write_eox)
     if (write_eox) uart::write(0xF7u);
     s_din_locked = false;
     din_queue_flush();
+}
+
+// Has the frame holding the jack stopped coming?
+bool din_stalled(uint32_t now_ms)
+{
+    return s_din_locked && (uint32_t)(now_ms - s_din_fed_ms) >= DIN_STALL_MS;
 }
 
 // Does an inbound System Real-Time byte reach the DIN jack?
@@ -147,9 +173,11 @@ bool din_carries_realtime(Src src, uint8_t status)
     if (status == 0xFEu) return false;
 
     // The clock family rides its own switch, so a pedal can be the tempo master
-    // for the chain below it while still listening to a clock above.
+    // for the chain below it while still listening to a clock above. While the
+    // pedal is generating, the inbound clock is dropped whatever that switch says
+    // -- two clocks on one wire read as neither.
     if (status == 0xF8u || status == 0xFAu || status == 0xFBu || status == 0xFCu)
-        return s_config.clock_thru;
+        return s_config.clock_thru && !s_generating_clock;
 
     // System Reset is a panic message; it travels with the echo.
     return s_config.out_mode == OutMode::Merge || s_config.out_mode == OutMode::Thru;
@@ -276,7 +304,7 @@ static void feed_byte(Parser& p, uint8_t byte, Src src)
         p.sysex_overflow = false;
         p.sysex_buf[p.sysex_len++] = byte;
         p.sysex_to_din = din_carries(src) && din_sysex_begin(src);
-        if (p.sysex_to_din) uart::write(byte);
+        if (p.sysex_to_din) din_sysex_byte(byte);
         return;
     }
     if (p.in_sysex) {
@@ -294,7 +322,7 @@ static void feed_byte(Parser& p, uint8_t byte, Src src)
         if (byte < 0x80) {                  // SysEx data byte
             if (p.sysex_len < Parser::SYSEX_BUF) p.sysex_buf[p.sysex_len++] = byte;
             else                                 p.sysex_overflow = true;
-            if (p.sysex_to_din) uart::write(byte);
+            if (p.sysex_to_din) din_sysex_byte(byte);
             return;
         }
         // Any other status byte aborts the SysEx (MIDI spec: only real-time may
@@ -348,6 +376,20 @@ void midi_handler::update()
     uint8_t byte;
     while (uart::read(byte))     feed_byte(s_uart_parser, byte, Src::Uart);
     while (usb_midi::read(byte)) feed_byte(s_usb_parser,  byte, Src::Usb);
+
+    // A frame that stopped coming has to give the jack back, or everything the
+    // pedal says queues behind a sender that is no longer there. Close the
+    // forwarded copy with an EOX so the downstream parser is not left holding a
+    // frame that never ends, and stop forwarding the rest of it.
+    //
+    // The local parse is deliberately left alone: a host that merely paused still
+    // gets its frame understood when it resumes. Only the pass-through copy --
+    // already truncated downstream by the silence -- is abandoned.
+    if (din_stalled(systick::now_ms())) {
+        Parser& p = (s_din_owner == Src::Usb) ? s_usb_parser : s_uart_parser;
+        p.sysex_to_din = false;
+        din_sysex_end(s_din_owner, true);
+    }
 }
 
 void midi_handler::set_channel(uint8_t ch) { s_config.channel = ch; }
@@ -377,3 +419,5 @@ void midi_handler::set_sysex_always_accepted(const uint8_t* cmds, uint8_t count)
     s_sysex_always     = cmds;
     s_sysex_always_len = count;
 }
+
+void midi_handler::set_generating_clock(bool on) { s_generating_clock = on; }
