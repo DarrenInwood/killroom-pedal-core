@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <deque>
 #include <vector>
+#include <string>
 
 // --- recording stubs for the driver reads/writes midi_handler.cpp calls -----
 namespace uart {
@@ -45,8 +46,30 @@ static std::vector<std::vector<uint8_t>> g_sysex;
 static int g_clock       = 0;
 static int g_clock_reset = 0;
 
-extern "C" void on_midi_cc(uint8_t ch, uint8_t cc, uint8_t v)      { g_cc.push_back({ch, cc, v}); }
-extern "C" void on_midi_program_change(uint8_t ch, uint8_t p)      { g_pc.push_back({ch, p}); }
+// Every dispatch in order, so a test can assert the sequence and not merely the set.
+// A footswitch that reconfigures a whole board sends a Program Change and the bypass
+// CC back to back, and acting on them out of order is as wrong as dropping one.
+static std::vector<std::string> g_order;
+
+// Bytes the program-change callback pushes into the receive stream, standing in for a
+// controller that keeps sending while the pedal is busy loading a preset.
+static std::vector<uint8_t> g_pc_arrivals;
+
+extern "C" void on_midi_cc(uint8_t ch, uint8_t cc, uint8_t v)
+{
+    g_cc.push_back({ch, cc, v});
+    g_order.push_back("cc" + std::to_string(cc));
+}
+extern "C" void on_midi_program_change(uint8_t ch, uint8_t p)
+{
+    g_pc.push_back({ch, p});
+    g_order.push_back("pc" + std::to_string(p));
+    // Whatever the product does here -- an EEPROM read, a page write, a buffer flush --
+    // more of the burst is landing in the ring meanwhile. Standing that in here proves
+    // the drain picks it up in the same pass rather than after the next tick.
+    for (uint8_t b : g_pc_arrivals) uart::g_rx.push_back(b);
+    g_pc_arrivals.clear();
+}
 extern "C" void on_midi_sysex(const uint8_t* d, uint16_t len)      { g_sysex.emplace_back(d, d + len); }
 extern "C" void on_midi_note_on(uint8_t ch, uint8_t n, uint8_t v)  { g_note.push_back({ch, n, v}); }
 extern "C" void on_midi_note_off(uint8_t ch, uint8_t n, uint8_t v) { g_note_off.push_back({ch, n, v}); }
@@ -76,6 +99,8 @@ void setUp(void) {
     g_note_off.clear();
     g_sysex.clear();
     g_clock = g_clock_reset = 0;
+    g_order.clear();
+    g_pc_arrivals.clear();
     // Reset the file-static parser state (visible here because we #include the .cpp)
     // so running status / SysEx accumulation never leaks across tests.
     s_uart_parser = Parser{};
@@ -653,6 +678,120 @@ void test_thru_never_outgrows_the_stream_it_echoes(void) {
     TEST_ASSERT_TRUE(uart::g_thru.size() <= stream.size());
 }
 
+
+// ---------------------------------------------------------------------------
+// The board-wide footswitch
+//
+// A MIDI foot controller reconfigures every pedal at once: twenty-odd messages
+// back to back at wire speed, most of them addressed elsewhere, with this pedal's
+// Program Change and its bypass CC adjacent somewhere in the middle. Pedals that
+// stop listening for a while after acting on a message end up in the preset but
+// not the bypass state, or the other way about, depending on where in the burst
+// they were -- which is why their manuals ask for padding messages or a delay
+// between the two. Neither is a fix; both just move the race.
+//
+// Nothing here may depend on spacing, ordering relative to other devices' traffic,
+// or how long the product spends acting on a message.
+// ---------------------------------------------------------------------------
+
+// A burst of the shape a Bridge 6 or MC8 sends: traffic for other devices, this
+// pedal's Program Change and bypass CC adjacent within it, then more traffic.
+static std::vector<uint8_t> board_burst(uint8_t ours, uint8_t prog, uint8_t bypass_cc,
+                                        uint8_t bypass_val, bool pc_first = true)
+{
+    std::vector<std::vector<uint8_t>> msgs;
+    const uint8_t other[3] = {2u, 5u, 9u};          // three other pedals on the board
+    for (uint8_t ch : other) {
+        msgs.push_back({(uint8_t)(0xC0u | ch), 3u});             // their preset
+        msgs.push_back({(uint8_t)(0xB0u | ch), 14u, 127u});      // their bypass
+        msgs.push_back({(uint8_t)(0xB0u | ch), 20u, 64u});       // and a parameter
+    }
+    if (pc_first) {
+        msgs.push_back({(uint8_t)(0xC0u | ours), prog});
+        msgs.push_back({(uint8_t)(0xB0u | ours), bypass_cc, bypass_val});
+    } else {
+        msgs.push_back({(uint8_t)(0xB0u | ours), bypass_cc, bypass_val});
+        msgs.push_back({(uint8_t)(0xC0u | ours), prog});
+    }
+    for (uint8_t ch : other) {
+        msgs.push_back({(uint8_t)(0xB0u | ch), 21u, 100u});
+        msgs.push_back({(uint8_t)(0xB0u | ch), 22u, 10u});
+    }
+    return as_running_status(msgs);
+}
+
+// Both of ours are acted on, in the order they were sent, with every other device's
+// traffic passing through untouched around them.
+void test_board_burst_delivers_both_of_ours_in_order(void) {
+    const std::vector<uint8_t> burst = board_burst(0u, 5u, 14u, 127u);
+    for (uint8_t b : burst) uart::g_rx.push_back(b);
+    midi_handler::update();
+
+    TEST_ASSERT_EQUAL_INT(1, (int)g_pc.size());
+    TEST_ASSERT_EQUAL_UINT8(5u, g_pc[0].prog);
+    TEST_ASSERT_EQUAL_INT(1, (int)g_cc.size());
+    TEST_ASSERT_EQUAL_UINT8(14u, g_cc[0].cc);
+    TEST_ASSERT_EQUAL_UINT8(127u, g_cc[0].val);
+
+    // The order matters as much as the arrival: preset first, then the bypass state
+    // that was meant for it.
+    TEST_ASSERT_EQUAL_INT(2, (int)g_order.size());
+    TEST_ASSERT_EQUAL_STRING("pc5", g_order[0].c_str());
+    TEST_ASSERT_EQUAL_STRING("cc14", g_order[1].c_str());
+
+    // And the rest of the board still got its instructions.
+    TEST_ASSERT_EQUAL_INT((int)parse_stream(burst).size(),
+                          (int)parse_stream(uart::g_thru).size());
+}
+
+// The same burst with the two swapped: whatever the controller's order, that is the
+// order the pedal applies. Nothing here reorders or coalesces.
+void test_board_burst_honours_the_controllers_order(void) {
+    const std::vector<uint8_t> burst = board_burst(0u, 7u, 14u, 0u, /*pc_first=*/false);
+    for (uint8_t b : burst) uart::g_rx.push_back(b);
+    midi_handler::update();
+
+    TEST_ASSERT_EQUAL_INT(2, (int)g_order.size());
+    TEST_ASSERT_EQUAL_STRING("cc14", g_order[0].c_str());
+    TEST_ASSERT_EQUAL_STRING("pc7", g_order[1].c_str());
+}
+
+// The failure this whole section exists to rule out: the pedal going deaf while it
+// acts on a message. Everything the controller sends during the preset load is still
+// picked up, in the same drain -- not after the next tick, and not never.
+void test_nothing_is_missed_while_the_preset_loads(void) {
+    // The bypass CC and the rest of the burst arrive while the callback is working.
+    std::vector<std::vector<uint8_t>> during;
+    during.push_back({0xB0u, 14u, 127u});
+    for (int i = 0; i < 8; ++i) during.push_back({0xB2u, (uint8_t)(20 + i), 64u});
+    g_pc_arrivals = as_running_status(during);
+
+    feed_uart({0xC0, 0x05});                        // the Program Change starts the work
+
+    TEST_ASSERT_EQUAL_INT(1, (int)g_pc.size());
+    TEST_ASSERT_EQUAL_INT(1, (int)g_cc.size());     // ours, arrived mid-load
+    TEST_ASSERT_EQUAL_UINT8(14u, g_cc[0].cc);
+    TEST_ASSERT_EQUAL_INT(2, (int)g_order.size());
+    TEST_ASSERT_EQUAL_STRING("pc5", g_order[0].c_str());
+    TEST_ASSERT_EQUAL_STRING("cc14", g_order[1].c_str());
+}
+
+// Spacing must not matter. The same two messages delivered as one burst, and split
+// across separate drains the way a slower controller would send them, land the same.
+void test_the_gap_between_the_two_changes_nothing(void) {
+    feed_uart({0xC0, 0x05, 0xB0, 14u, 127u});       // back to back, one drain
+    const std::vector<std::string> together = g_order;
+
+    g_order.clear(); g_pc.clear(); g_cc.clear();
+    s_uart_parser = Parser{};
+    feed_uart({0xC0, 0x05});                        // and split across two
+    feed_uart({0xB0, 14u, 127u});
+
+    TEST_ASSERT_EQUAL_INT((int)together.size(), (int)g_order.size());
+    for (size_t i = 0; i < together.size(); ++i)
+        TEST_ASSERT_EQUAL_STRING(together[i].c_str(), g_order[i].c_str());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_cc_dispatch_on_matching_channel);
@@ -692,5 +831,9 @@ int main(int, char**) {
     RUN_TEST(test_the_generated_clock_displaces_the_forwarded_one);
     RUN_TEST(test_sustained_stream_is_forwarded_without_growing);
     RUN_TEST(test_thru_never_outgrows_the_stream_it_echoes);
+    RUN_TEST(test_board_burst_delivers_both_of_ours_in_order);
+    RUN_TEST(test_board_burst_honours_the_controllers_order);
+    RUN_TEST(test_nothing_is_missed_while_the_preset_loads);
+    RUN_TEST(test_the_gap_between_the_two_changes_nothing);
     return UNITY_END();
 }
