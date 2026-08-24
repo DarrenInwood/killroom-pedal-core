@@ -59,6 +59,8 @@ def main(argv: list[str], *, product: str, device_id: int, slug: str,
     parser.add_argument("--image", type=Path, help="the built .bin; omit to check the version only")
     parser.add_argument("--out", type=Path, help="where to write the manifest")
     parser.add_argument("--notes", default="", help="what changed, in a sentence a player cares about")
+    parser.add_argument("--manual", type=Path,
+                        help="the built manual PDF; published beside the image and named in the entry")
     args = parser.parse_args(argv[1:])
 
     version = version_from_source(header, macros)
@@ -81,6 +83,10 @@ def main(argv: list[str], *, product: str, device_id: int, slug: str,
         print(f"release_manifest: {args.image} does not exist — build it first", file=sys.stderr)
         return 1
 
+    if args.manual is not None and not args.manual.exists():
+        print(f"release_manifest: {args.manual} does not exist — build it first", file=sys.stderr)
+        return 1
+
     entry = {
         "deviceId": device_id,
         "product": product,
@@ -89,10 +95,19 @@ def main(argv: list[str], *, product: str, device_id: int, slug: str,
         "url": f"{slug}-{version}.bin",
         "bytes": args.image.stat().st_size,
     }
+    # The manual is versioned with the firmware it documents, and published
+    # under a per-version name for the same reason the image is: a pedal in the
+    # field may be running an old version, and the pages describing it have to
+    # still be there. Overwriting one manual.pdf per release would leave every
+    # earlier release pointing at a document for firmware nobody has.
+    if args.manual is not None:
+        entry["manual"] = f"{slug}-manual-{version}.pdf"
+
     notes = args.notes.strip()
     if notes:
         entry["notes"] = notes
 
     args.out.write_text(json.dumps({"releases": [entry]}, indent=2) + "\n", encoding="utf-8")
-    print(f"release_manifest: {product} {version}, {entry['bytes']} bytes -> {args.out}")
+    manual = f", manual {entry['manual']}" if "manual" in entry else ""
+    print(f"release_manifest: {product} {version}, {entry['bytes']} bytes{manual} -> {args.out}")
     return 0
