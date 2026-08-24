@@ -34,14 +34,19 @@ from __future__ import annotations
 import struct
 import zlib
 
-from app_image import HEADER_OFF, MAGIC
+from app_image import HEADER_OFF, IDENT_FORMAT, MAGIC, identity
 
 # 0x204: the `size` field within the descriptor.
 SIZE_FIELD_OFF = HEADER_OFF + 4
 
 
-def seal_image(path: str) -> tuple[int, int] | None:
+def seal_image(path: str, require_ident: bool = False) -> tuple[int, int] | None:
     """Patch the size field and append the CRC32 trailer, in place.
+
+    `require_ident` refuses an image whose descriptor does not name a product. The
+    guard belongs here as well as in CI because a locally built .bin can be hand-flashed
+    without ever passing through a gate, and a bootloader that enforces identity would
+    then reject it on hardware with no explanation.
 
     Returns `(size, crc)`, or `None` when the image was already sealed —
     re-running a build must never append a second trailer.
@@ -62,6 +67,15 @@ def seal_image(path: str) -> tuple[int, int] | None:
             "expected 0x%08X). The app linker script must pin .app_header there."
             % (HEADER_OFF, magic, MAGIC)
         )
+
+    if require_ident:
+        fmt, mfr, dev = identity(data)
+        if fmt != IDENT_FORMAT:
+            raise Exception(
+                "appimage_crc: the descriptor's ident word is 0x%02X, not format %d - "
+                "app_image.cpp must emit make_ident(...) or the bootloader will refuse "
+                "this image." % (fmt, IDENT_FORMAT)
+            )
 
     # A fresh elf->bin carries size == 0; a non-zero value means this bin was
     # already patched (idempotency guard — never append a second trailer).

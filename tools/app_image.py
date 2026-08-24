@@ -44,10 +44,32 @@ from pathlib import Path
 MAGIC = 0x4D4F4448
 HEADER_OFF = 0x200
 HEADER_SIZE = 16
+IDENT_OFF = 8            # within the descriptor: format | mfr | device | reserved
+VERSION_OFF = 12         # within the descriptor: patch | minor | major | reserved
+IDENT_FORMAT = 1         # 0xFF means the product has not claimed the word
 
 
-def check(path: Path, region_bytes: int) -> list[str]:
-    """Every reason this image would be refused, or an empty list."""
+def identity(img: bytes) -> tuple[int, int, int]:
+    """(format, manufacturer, device) from the descriptor's ident word."""
+    word = struct.unpack_from("<I", img, HEADER_OFF + IDENT_OFF)[0]
+    return word & 0xFF, (word >> 8) & 0xFF, (word >> 16) & 0xFF
+
+
+def version(img: bytes) -> tuple[int, int, int]:
+    """(major, minor, patch) from the descriptor's version word."""
+    word = struct.unpack_from("<I", img, HEADER_OFF + VERSION_OFF)[0]
+    return (word >> 16) & 0xFF, (word >> 8) & 0xFF, word & 0xFF
+
+
+def check(path: Path, region_bytes: int, expect: dict | None = None) -> list[str]:
+    """Every reason this image would be refused, or an empty list.
+
+    `expect` is optional and defaults to off, so a product that has not claimed the
+    descriptor's ident word is unaffected. When given, it may carry `manufacturer`,
+    `device` and `version` (a "major.minor.patch" string) read from that product's own
+    headers -- which turns this from Python checking the sealer's own output into a
+    cross-check of what the compiler actually emitted.
+    """
     img = path.read_bytes()
     problems: list[str] = []
 
@@ -75,6 +97,28 @@ def check(path: Path, region_bytes: int) -> list[str]:
     if size < HEADER_OFF + HEADER_SIZE + 4:
         problems.append(f"{path}: {size} bytes is shorter than a descriptor plus a trailer")
 
+    if expect:
+        fmt, mfr, dev = identity(img)
+        if fmt != IDENT_FORMAT:
+            problems.append(
+                f"{path}: descriptor ident format 0x{fmt:02X} != {IDENT_FORMAT} -- the "
+                "image does not name a product, and a bootloader that enforces identity "
+                "will refuse it"
+            )
+        else:
+            if "manufacturer" in expect and mfr != expect["manufacturer"]:
+                problems.append(
+                    f"{path}: manufacturer 0x{mfr:02X} != 0x{expect['manufacturer']:02X}"
+                )
+            if "device" in expect and dev != expect["device"]:
+                problems.append(f"{path}: device 0x{dev:02X} != 0x{expect['device']:02X}")
+        if "version" in expect:
+            got = ".".join(str(n) for n in version(img))
+            if got != expect["version"]:
+                problems.append(
+                    f"{path}: descriptor version {got} != {expect['version']} from source"
+                )
+
     if not problems:
         stored = struct.unpack_from("<I", img, size - 4)[0]
         calc = zlib.crc32(img[: size - 4]) & 0xFFFFFFFF
@@ -85,7 +129,8 @@ def check(path: Path, region_bytes: int) -> list[str]:
     return problems
 
 
-def main(argv: list[str], *, region_bytes: int, usage: str | None = None) -> int:
+def main(argv: list[str], *, region_bytes: int, usage: str | None = None,
+         expect: dict | None = None) -> int:
     args = argv[1:]
     if len(args) != 1:
         print(usage or __doc__)
@@ -96,14 +141,18 @@ def main(argv: list[str], *, region_bytes: int, usage: str | None = None) -> int
         print(f"check_app_image: {path} does not exist — build it first", file=sys.stderr)
         return 1
 
-    problems = check(path, region_bytes)
+    problems = check(path, region_bytes, expect)
     if problems:
         print(f"check_app_image: {len(problems)} problem(s)\n", file=sys.stderr)
         for p in problems:
             print(f"  {p}", file=sys.stderr)
         return 1
 
-    size = struct.unpack_from("<I", path.read_bytes(), HEADER_OFF + 4)[0]
+    img = path.read_bytes()
+    size = struct.unpack_from("<I", img, HEADER_OFF + 4)[0]
+    fmt, mfr, dev = identity(img)
+    named = ("" if fmt != IDENT_FORMAT
+             else f", mfr 0x{mfr:02X} device 0x{dev:02X} v" + ".".join(str(n) for n in version(img)))
     print(f"check_app_image: PASS ({path.name} sealed, {size} bytes, "
-          f"{size * 100 // region_bytes}% of the app region)")
+          f"{size * 100 // region_bytes}% of the app region{named})")
     return 0
