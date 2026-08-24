@@ -79,6 +79,13 @@ constexpr uint32_t DIN_STALL_MS = 1000u;
 
 bool     s_din_locked = false;
 Src      s_din_owner  = Src::Uart;
+// The last channel status actually written to the jack. Forwarding a stream that
+// holds running status is not an optimisation here: both jacks run at 31250 baud,
+// so a forwarded stream longer than the one arriving cannot be sustained at all --
+// the transmit ring fills, uart::write spins, the loop stops draining the receive
+// ring, and messages are lost. Re-emitting a status byte per message costs 50% on a
+// saturated NRPN stream, which is 50% more than the wire has.
+uint8_t  s_din_running = 0;
 uint32_t s_din_fed_ms = 0;      // when the owning frame last produced a byte
 uint8_t  s_din_queue[DIN_QUEUE_BYTES];
 uint16_t s_din_queued = 0;
@@ -88,19 +95,35 @@ void din_raw(const uint8_t* b, uint16_t n)
     for (uint16_t i = 0; i < n; ++i) uart::write(b[i]);
 }
 
-void din_queue_flush()
-{
-    if (s_din_queued == 0) return;
-    din_raw(s_din_queue, s_din_queued);
-    s_din_queued = 0;
-}
+void din_queue_flush();   // defined below din_emit, which it forwards each record to
 
 // Whole message or nothing: a message the queue cannot hold is dropped rather
-// than truncated, because half a message downstream is worse than none.
+// than truncated, because half a message downstream is worse than none. Records are
+// length-prefixed so the flush still knows where each message ends -- it has to, or
+// it could not decide which status bytes running status lets it leave out.
 void din_queue_push(const uint8_t* b, uint16_t n)
 {
-    if (n > (uint16_t)(DIN_QUEUE_BYTES - s_din_queued)) return;
+    if (n > 255u) return;
+    if ((uint16_t)(n + 1u) > (uint16_t)(DIN_QUEUE_BYTES - s_din_queued)) return;
+    s_din_queue[s_din_queued++] = (uint8_t)n;
     for (uint16_t i = 0; i < n; ++i) s_din_queue[s_din_queued++] = b[i];
+}
+
+// One whole message onto the jack, holding running status: a channel message whose
+// status is already the one on the wire goes out as its data bytes alone, exactly as
+// the controller sent it. System Common and SysEx break the run (the spec says so);
+// System Real-Time does not, which is why route_realtime writes straight past this.
+void din_emit(const uint8_t* msg, uint16_t n)
+{
+    if (n == 0u) return;
+    const uint8_t st = msg[0];
+    if (st >= 0x80u && st < 0xF0u) {
+        if (st == s_din_running) { din_raw(msg + 1, (uint16_t)(n - 1)); return; }
+        s_din_running = st;
+    } else if (st >= 0xF0u && st <= 0xF7u) {
+        s_din_running = 0;
+    }
+    din_raw(msg, n);
 }
 
 // Does this source's traffic reach the DIN jack at all?
@@ -118,10 +141,21 @@ bool din_carries(Src src)
     }
 }
 
+void din_queue_flush()
+{
+    uint16_t i = 0;
+    while (i < s_din_queued) {
+        const uint8_t n = s_din_queue[i++];
+        din_emit(&s_din_queue[i], n);
+        i = (uint16_t)(i + n);
+    }
+    s_din_queued = 0;
+}
+
 void din_message(Src src, const uint8_t* msg, uint16_t n)
 {
     if (s_din_locked && s_din_owner != src) { din_queue_push(msg, n); return; }
-    din_raw(msg, n);
+    din_emit(msg, n);
     if (!s_din_locked) din_queue_flush();
 }
 
@@ -132,9 +166,10 @@ void din_message(Src src, const uint8_t* msg, uint16_t n)
 bool din_sysex_begin(Src src)
 {
     if (s_din_locked) return false;
-    s_din_locked = true;
-    s_din_owner  = src;
-    s_din_fed_ms = systick::now_ms();
+    s_din_locked  = true;
+    s_din_owner   = src;
+    s_din_fed_ms  = systick::now_ms();
+    s_din_running = 0;      // SysEx ends whatever run was on the wire
     return true;
 }
 
@@ -352,9 +387,10 @@ static void feed_byte(Parser& p, uint8_t byte, Src src)
 
     p.data[p.data_idx++] = byte;
     if (p.data_idx >= p.data_len) {
-        // Forwarded with its status byte, so a run of messages sharing one leaves
-        // the jack as complete messages rather than a stream another source could
-        // splice into. Costs a byte per message and buys atomicity.
+        // Handed on whole -- status byte included -- so the router knows what the
+        // message is. Whether that status reaches the wire is din_emit's decision:
+        // it holds running status when the jack is already on that status, so a
+        // forwarded stream is never longer than the one that arrived.
         const uint8_t msg[3] = { p.status, p.data[0], p.data[1] };
         route_message(src, msg, (uint16_t)(1u + p.data_len));
         dispatch(p.status, p.data, p.data_len);

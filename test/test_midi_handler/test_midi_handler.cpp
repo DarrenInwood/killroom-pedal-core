@@ -84,9 +84,13 @@ void setUp(void) {
     // SysEx half-forwarded would otherwise hand the lock to the next one.
     usb_midi::g_tx.clear();
     usb_midi::g_tx_sysex.clear();
-    s_din_locked = false;
-    s_din_queued = 0;
-    s_din_fed_ms = 0;
+    s_din_locked  = false;
+    s_din_queued  = 0;
+    s_din_fed_ms  = 0;
+    // The status byte the jack is on outlives any one message by design -- that is
+    // what running status is -- so a test that leaves the wire mid-run would hand the
+    // next one a jack that omits status bytes it is expecting to see.
+    s_din_running = 0;
     s_generating_clock = false;
     systick::fake_set_ms(0u);
     s_sysex_always     = nullptr;
@@ -314,13 +318,23 @@ void test_own_realtime_passes_through_an_inbound_sysex(void) {
     TEST_ASSERT_EQUAL_UINT8(0xF8, uart::g_thru[2]);
 }
 
-// Running status is expanded on the way out, so each forwarded message is whole.
-void test_running_status_is_expanded_when_forwarded(void) {
+// Running status is held on the way out, so a forwarded stream is exactly as long as
+// the one that arrived. Both jacks run at the same baud, so this is what makes an
+// unbroken stream forwardable at all -- see the throughput tests below.
+void test_running_status_is_held_when_forwarded(void) {
     feed_uart({0xB0, 0x01, 0x10, 0x02, 0x20});
-    TEST_ASSERT_EQUAL_INT(6, (int)uart::g_thru.size());
-    TEST_ASSERT_EQUAL_UINT8(0xB0, uart::g_thru[3]);
-    TEST_ASSERT_EQUAL_UINT8(0x02, uart::g_thru[4]);
-    TEST_ASSERT_EQUAL_UINT8(0x20, uart::g_thru[5]);
+    TEST_ASSERT_EQUAL_INT(5, (int)uart::g_thru.size());
+    TEST_ASSERT_EQUAL_UINT8(0xB0, uart::g_thru[0]);
+    TEST_ASSERT_EQUAL_UINT8(0x02, uart::g_thru[3]);   // second message, status held
+    TEST_ASSERT_EQUAL_UINT8(0x20, uart::g_thru[4]);
+}
+
+// But a different status has to be re-stated, or the data lands under the wrong one.
+void test_a_changed_status_is_restated(void) {
+    feed_uart({0xB0, 0x01, 0x10, 0xC0, 0x07, 0xB0, 0x02, 0x20});
+    const std::vector<uint8_t> want = {0xB0, 0x01, 0x10, 0xC0, 0x07, 0xB0, 0x02, 0x20};
+    TEST_ASSERT_EQUAL_INT((int)want.size(), (int)uart::g_thru.size());
+    for (size_t i = 0; i < want.size(); ++i) TEST_ASSERT_EQUAL_UINT8(want[i], uart::g_thru[i]);
 }
 
 void test_clock_thru_off_stops_forwarding_the_clock_family(void) {
@@ -454,10 +468,14 @@ void test_a_stalled_sysex_gives_the_jack_back(void) {
     TEST_ASSERT_EQUAL_UINT8(0xF7, uart::g_thru[0]);
     TEST_ASSERT_EQUAL_UINT8(0xB0, uart::g_thru[1]);
 
-    // And the jack is free for what comes next.
+    // And the jack is free for what comes next. A different status, so the check is
+    // about the jack being usable rather than about how many bytes running status
+    // lets a repeat of the previous message leave out.
     uart::g_thru.clear();
-    midi_handler::send_own(own, 3);
-    TEST_ASSERT_EQUAL_INT(3, (int)uart::g_thru.size());
+    const uint8_t other[2] = {0xC0, 0x09};
+    midi_handler::send_own(other, 2);
+    TEST_ASSERT_EQUAL_INT(2, (int)uart::g_thru.size());
+    TEST_ASSERT_EQUAL_UINT8(0xC0, uart::g_thru[0]);
 }
 
 // A host that merely paused still gets its frame understood: the timeout abandons
@@ -506,6 +524,135 @@ void test_the_generated_clock_displaces_the_forwarded_one(void) {
     TEST_ASSERT_EQUAL_INT(1, (int)uart::g_thru.size());
 }
 
+
+// ---------------------------------------------------------------------------
+// Sustained throughput
+//
+// MIDI In and MIDI Out run at the same 31250 baud, so forwarding can only keep up
+// with an unbroken inbound stream while the pedal emits no MORE bytes than it
+// received. There is no headroom to borrow: the moment the forwarded stream is
+// longer than the one arriving, the transmit ring fills, uart::write spins, the
+// loop stops draining the receive ring, and the pedal starts losing the very
+// messages it is supposed to act on.
+//
+// That makes the byte budget an invariant worth asserting directly, with no
+// timing model in the way: bytes out <= bytes in, for a single-source stream.
+// A controller streaming NRPNs holds running status, so this is exactly the case
+// a busy rig produces.
+// ---------------------------------------------------------------------------
+
+// Expand a message list into the byte stream a controller would actually send:
+// the status byte only when it changes, which is what running status means.
+static std::vector<uint8_t> as_running_status(const std::vector<std::vector<uint8_t>>& msgs)
+{
+    std::vector<uint8_t> out;
+    uint8_t running = 0;
+    for (const auto& m : msgs) {
+        const uint8_t st = m[0];
+        if (st >= 0xF0u) {                      // system messages break the run
+            running = 0;
+            out.insert(out.end(), m.begin(), m.end());
+            continue;
+        }
+        if (st != running) { out.push_back(st); running = st; }
+        out.insert(out.end(), m.begin() + 1, m.end());
+    }
+    return out;
+}
+
+// Parse a byte stream back into messages, the way the device downstream will.
+static std::vector<std::vector<uint8_t>> parse_stream(const std::vector<uint8_t>& bytes)
+{
+    std::vector<std::vector<uint8_t>> msgs;
+    uint8_t status = 0;
+    std::vector<uint8_t> cur;
+    uint8_t want = 0;
+    for (uint8_t b : bytes) {
+        if (b >= 0xF8u) continue;               // real-time may appear anywhere
+        if (b & 0x80u) {
+            status = b;
+            want = expected_data_bytes(b);
+            cur.assign(1, b);
+            if (want == 0) { msgs.push_back(cur); cur.clear(); status = 0; }
+            continue;
+        }
+        if (status == 0) continue;              // data with no status: unparseable
+        if (cur.empty()) cur.push_back(status); // running status: re-attach it
+        cur.push_back(b);
+        if (cur.size() == (size_t)(want + 1u)) { msgs.push_back(cur); cur.clear(); }
+    }
+    return msgs;
+}
+
+// One NRPN quad on `ch`: select the parameter, then write it.
+static void push_quad(std::vector<std::vector<uint8_t>>& msgs, uint8_t ch, uint8_t idx, uint16_t v)
+{
+    const uint8_t st = (uint8_t)(0xB0u | ch);
+    msgs.push_back({st, 99u, 0u});
+    msgs.push_back({st, 98u, idx});
+    msgs.push_back({st, 6u,  (uint8_t)((v >> 7) & 0x7Fu)});
+    msgs.push_back({st, 38u, (uint8_t)(v & 0x7Fu)});
+}
+
+// The scenario: an unbroken NRPN stream addressed to another device, one Program
+// Change addressed to this pedal, then the stream resuming. The pedal must act on
+// the Program Change and pass every other message through untouched -- and must do
+// it without emitting more bytes than it took in, or it cannot keep this up.
+void test_sustained_stream_is_forwarded_without_growing(void) {
+    const uint8_t other_ch = 5u;                // not ours; we listen on 0
+    std::vector<std::vector<uint8_t>> sent;
+    for (int i = 0; i < 200; ++i) push_quad(sent, other_ch, (uint8_t)(i & 0x0F), (uint16_t)(i * 7));
+    sent.push_back({0xC0u, 7u});                // ours, mid-stream
+    for (int i = 0; i < 200; ++i) push_quad(sent, other_ch, (uint8_t)(i & 0x0F), (uint16_t)(i * 3));
+
+    const std::vector<uint8_t> stream = as_running_status(sent);
+    for (uint8_t b : stream) uart::g_rx.push_back(b);
+    midi_handler::update();
+
+    // What it acted on: the one Program Change meant for it, and nothing else.
+    TEST_ASSERT_EQUAL_INT(1, (int)g_pc.size());
+    TEST_ASSERT_EQUAL_UINT8(7u, g_pc[0].prog);
+    TEST_ASSERT_EQUAL_INT(0, (int)g_cc.size());   // every CC was on another channel
+
+    // What it passed on: the same messages, in the same order, none missing.
+    const std::vector<std::vector<uint8_t>> got = parse_stream(uart::g_thru);
+    TEST_ASSERT_EQUAL_INT((int)sent.size(), (int)got.size());
+    for (size_t i = 0; i < sent.size(); ++i) {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "message %u", (unsigned)i);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(sent[i][0], got[i][0], msg);
+        TEST_ASSERT_EQUAL_INT_MESSAGE((int)sent[i].size(), (int)got[i].size(), msg);
+        for (size_t k = 1; k < sent[i].size(); ++k)
+            TEST_ASSERT_EQUAL_UINT8_MESSAGE(sent[i][k], got[i][k], msg);
+    }
+
+    // And the budget that makes it sustainable. Both jacks run at one byte per
+    // 320 us, so a forwarded stream longer than the one arriving cannot be kept up
+    // whatever the buffering -- the deficit only accumulates.
+    char budget[96];
+    snprintf(budget, sizeof(budget), "forwarded %u bytes for %u received",
+             (unsigned)uart::g_thru.size(), (unsigned)stream.size());
+    TEST_ASSERT_TRUE_MESSAGE(uart::g_thru.size() <= stream.size(), budget);
+}
+
+// The same budget with the pedal's own traffic in the mix. Merge cannot invent wire
+// time, so what it adds has to come out of headroom the stream is not using -- which
+// a saturated stream does not have. Thru is the setting that always keeps up.
+void test_thru_never_outgrows_the_stream_it_echoes(void) {
+    midi_handler::Config c = midi_handler::get_config();
+    c.out_mode = midi_handler::OutMode::Thru;
+    midi_handler::set_config(c);
+
+    std::vector<std::vector<uint8_t>> sent;
+    for (int i = 0; i < 100; ++i) push_quad(sent, 5u, (uint8_t)i, (uint16_t)i);
+    const std::vector<uint8_t> stream = as_running_status(sent);
+    for (uint8_t b : stream) uart::g_rx.push_back(b);
+    midi_handler::update();
+
+    TEST_ASSERT_EQUAL_INT((int)sent.size(), (int)parse_stream(uart::g_thru).size());
+    TEST_ASSERT_TRUE(uart::g_thru.size() <= stream.size());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_cc_dispatch_on_matching_channel);
@@ -529,7 +676,8 @@ int main(int, char**) {
     RUN_TEST(test_out_mode_off_silences_the_jack);
     RUN_TEST(test_own_message_waits_behind_an_inbound_sysex);
     RUN_TEST(test_own_realtime_passes_through_an_inbound_sysex);
-    RUN_TEST(test_running_status_is_expanded_when_forwarded);
+    RUN_TEST(test_running_status_is_held_when_forwarded);
+    RUN_TEST(test_a_changed_status_is_restated);
     RUN_TEST(test_clock_thru_off_stops_forwarding_the_clock_family);
     RUN_TEST(test_active_sensing_is_never_forwarded);
     RUN_TEST(test_din_to_usb_forwards_messages_and_frames);
@@ -542,5 +690,7 @@ int main(int, char**) {
     RUN_TEST(test_a_stall_abandons_the_copy_not_the_parse);
     RUN_TEST(test_a_slow_frame_keeps_the_jack);
     RUN_TEST(test_the_generated_clock_displaces_the_forwarded_one);
+    RUN_TEST(test_sustained_stream_is_forwarded_without_growing);
+    RUN_TEST(test_thru_never_outgrows_the_stream_it_echoes);
     return UNITY_END();
 }
