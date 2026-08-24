@@ -62,6 +62,7 @@ inline constexpr uint8_t GLOBAL_DATA      = 0x22u;
 inline constexpr uint8_t SET_NOISE        = 0x23u;
 inline constexpr uint8_t SET_EXT_INPUT    = 0x24u;
 inline constexpr uint8_t SET_SYNC         = 0x25u;
+inline constexpr uint8_t SET_MIDI         = 0x26u;  // the whole routing block; see midi_routing
 inline constexpr uint8_t VERSION_REQ      = 0x30u;
 inline constexpr uint8_t VERSION_DATA     = 0x31u;
 inline constexpr uint8_t SET_BPM          = 0x40u;
@@ -90,6 +91,7 @@ inline constexpr uint16_t FACTORY_BANK   = 1u << 6;
 inline constexpr uint16_t UID            = 1u << 7;  // answers UID_REQ
 inline constexpr uint16_t SAVE_ADDRESSED = 1u << 8;  // PRESET_SAVE takes <bank><prog>
 inline constexpr uint16_t BOOST          = 1u << 9;  // presets carry a second sound, the preset's BOOST tag
+inline constexpr uint16_t MIDI_ROUTING   = 1u << 10; // SET_MIDI and the global MIDI_ROUTING tag
 }  // namespace cap
 
 // --- TLV tags ---------------------------------------------------------------
@@ -109,7 +111,68 @@ inline constexpr uint8_t CHANNEL   = 0x10u;  // 0-15, or 16 for omni
 inline constexpr uint8_t NOISE     = 0x11u;  // <enabled> <threshold> <depth>
 inline constexpr uint8_t EXT_INPUT = 0x12u;  // <mode> <tip> <ring> <both>
 inline constexpr uint8_t BYPASS    = 0x13u;  // 0 bypassed, 1 active
+// The MIDI routing block, midi_routing::LEN bytes in the order that namespace
+// gives. CHANNEL stays alongside it, carrying the same receive channel in the
+// older one-byte form, so a host that predates this tag still reads a channel.
+inline constexpr uint8_t MIDI_ROUTING = 0x14u;
 }  // namespace global_tag
+
+// --- the MIDI routing block -------------------------------------------------
+// One payload shared by SET_MIDI and the MIDI_ROUTING tag, so a host writes back
+// exactly what it read. Every byte is 7-bit safe; a value outside its range is
+// the pedal's to clamp, not the host's to assume.
+namespace midi_routing {
+
+// What the DIN Out jack carries.
+namespace out_mode {
+inline constexpr uint8_t MERGE = 0u;  // inbound echo plus the pedal's own messages
+inline constexpr uint8_t THRU  = 1u;  // inbound echo only
+inline constexpr uint8_t OUT   = 2u;  // the pedal's own messages only
+inline constexpr uint8_t OFF   = 3u;  // silent
+inline constexpr uint8_t COUNT = 4u;
+}
+
+// Cross-routing between the transports, which makes the pedal a MIDI interface.
+namespace usb_din {
+inline constexpr uint8_t OFF        = 0u;
+inline constexpr uint8_t USB_TO_DIN = 1u;
+inline constexpr uint8_t DIN_TO_USB = 2u;
+inline constexpr uint8_t BOTH       = 3u;
+inline constexpr uint8_t COUNT      = 4u;
+}
+
+// Which of its own state changes the pedal announces. A pedal announces only a
+// change a player made on it -- never one a host asked for -- so Out patched
+// back to In cannot loop.
+namespace tx_state {
+inline constexpr uint8_t OFF        = 0u;
+inline constexpr uint8_t PC         = 1u;  // Bank Select + Program Change on preset change
+inline constexpr uint8_t BYPASS     = 2u;  // the bypass CC on a footswitch toggle
+inline constexpr uint8_t PC_BYPASS  = 3u;  // both
+inline constexpr uint8_t COUNT      = 4u;
+}
+
+// The transmit channel's "follow the receive channel" value. 0xFF is not a legal
+// SysEx data byte, so the block carries this instead -- the same trick EXPR_OFF
+// plays for the expression assignment.
+inline constexpr uint8_t TX_CHANNEL_FOLLOW_RX = 0x7Fu;
+
+// Payload byte offsets.
+inline constexpr uint8_t RX_CHANNEL = 0u;   // 0-15
+inline constexpr uint8_t OMNI       = 1u;   // 0 or 1
+inline constexpr uint8_t TX_CHANNEL = 2u;   // 0-15, or TX_CHANNEL_FOLLOW_RX
+inline constexpr uint8_t OUT_MODE   = 3u;   // out_mode::*
+inline constexpr uint8_t PC_OFFSET  = 4u;   // 0-127; the program that addresses slot 0
+inline constexpr uint8_t CLOCK_OUT  = 5u;   // 0 or 1
+inline constexpr uint8_t CLOCK_THRU = 6u;   // 0 or 1
+inline constexpr uint8_t USB_DIN    = 7u;   // usb_din::*
+inline constexpr uint8_t RX_PC      = 8u;   // 0 or 1
+inline constexpr uint8_t RX_SYSEX   = 9u;   // 0 or 1
+inline constexpr uint8_t TX_PARAMS  = 10u;  // 0 or 1
+inline constexpr uint8_t TX_STATE   = 11u;  // tx_state::*
+inline constexpr uint8_t LEN        = 12u;
+
+}  // namespace midi_routing
 
 // The wire sentinel for "no expression assignment". The record keeps 0xFF,
 // which is not a legal SysEx data byte, so the frame carries this instead.

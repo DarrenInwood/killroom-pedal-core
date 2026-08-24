@@ -11,8 +11,9 @@
 //     traffic and the null NRPN disarming it, data entry MSB applying alone at
 //     7-bit resolution (value << 7) with a following LSB refining it;
 //   - bank select (either CC, last one wins, sticky across PCs) and the
-//     bank*128+program slot arithmetic, out-of-range ignored rather than
-//     wrapped, and a PC to the current slot with no unsaved edits a no-op;
+//     bank*128+program slot arithmetic shifted by the product's program-change
+//     offset, out-of-range ignored rather than wrapped, and a PC to the current
+//     slot with no unsaved edits a no-op;
 //   - the bypass CC and the algorithm-select CC bounded by the product's count;
 //   - SysEx dispatch: F0 <mfr> <device> <cmd> ... F7 header validation, then a
 //     {cmd, min_len, handler} table walk over the product's table (short
@@ -63,6 +64,18 @@ protected:
     // A Program Change resolved to an in-range slot that is not the
     // current-and-clean one.
     virtual void load_slot_from_midi(uint16_t slot) = 0;
+
+    // The program number that addresses slot 0. A controller numbering its
+    // patches from 1 sends a program one higher than the slot it means, so this
+    // shifts the whole map rather than leaving the player to renumber their
+    // board. Default: the slot is the program.
+    virtual uint8_t pc_offset() const { return 0u; }
+
+    // The Bank Select / Program Change pair addressing a slot, offset applied --
+    // the exact inverse of what on_midi_program_change() resolves, so a pedal
+    // announcing its own preset addresses it the way it would be addressed.
+    // False when the offset pushes the slot past the 128 banks a PC can reach.
+    bool slot_to_pc(uint16_t slot, uint8_t& bank, uint8_t& program) const;
 
     // The bypass CC's meaning (most products: relay active >= 64).
     virtual void set_bypass_from_midi(bool active) = 0;
