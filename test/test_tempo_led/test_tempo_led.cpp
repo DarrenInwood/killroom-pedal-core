@@ -8,8 +8,9 @@
 // Coverage: period==0 blanks the LED, the 25% duty phase (on for the first
 // quarter of each period, off for the rest), the phase wrap when dt overshoots
 // the period (including a multi-period overshoot), reset() restarting the
-// phase, and the write-if-changed suppression that keeps the seam quiet
-// between transitions.
+// phase, the write-if-changed suppression that keeps the seam quiet between
+// transitions, and the MIDI-activity blip that borrows the LED without losing
+// the beat under it.
 
 #include <unity.h>
 #include <cstdint>
@@ -105,6 +106,52 @@ void test_write_if_changed_suppression(void) {
     TEST_ASSERT_EQUAL_INT(after_on + 1, (int)writes());
 }
 
+// The blip is the pedal's MIDI receive indicator, so it has to light the LED
+// during the dark three-quarters of a beat -- that is when a player looking for
+// an answer would otherwise see nothing.
+void test_blip_lights_the_led_mid_beat(void) {
+    tempo_led::reset();
+    tempo_led::update(60.0f, 100u);            // phase 60 -> off
+    TEST_ASSERT_FALSE(led_on());
+
+    tempo_led::blip();
+    tempo_led::update(1.0f, 100u);
+    TEST_ASSERT_TRUE(led_on());
+}
+
+// And on an algorithm with no tempo at all, where the LED is otherwise dark.
+void test_blip_lights_the_led_with_no_tempo(void) {
+    tempo_led::reset();
+    tempo_led::update(0.0f, 0u);
+    TEST_ASSERT_FALSE(led_on());
+
+    tempo_led::blip();
+    tempo_led::update(1.0f, 0u);
+    TEST_ASSERT_TRUE(led_on());
+}
+
+// The dwell is bounded, and the beat carried on underneath: after a blip that
+// spans a downbeat the LED is back in phase rather than restarted.
+void test_blip_expires_and_the_beat_kept_running(void) {
+    tempo_led::reset();
+    tempo_led::update(0.0f, 100u);   // phase 0, on
+    tempo_led::blip();
+
+    tempo_led::update(10.0f, 100u);  // dwell 40 left, phase 10
+    tempo_led::update(30.0f, 100u);  // dwell 10 left, phase 40 -- the beat would be dark
+    TEST_ASSERT_TRUE(led_on());
+
+    tempo_led::update(20.0f, 100u);  // the pass that spends the dwell still lights it
+    TEST_ASSERT_TRUE(led_on());
+    tempo_led::update(0.0f, 100u);   // and the next one is back on the beat: phase 60
+    TEST_ASSERT_FALSE(led_on());
+
+    // The phase advanced through the blip, so the next downbeat lands where the
+    // beat says it should rather than one dwell late.
+    tempo_led::update(40.0f, 100u);  // phase wraps to 0
+    TEST_ASSERT_TRUE(led_on());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_init_forces_led_off);
@@ -114,5 +161,8 @@ int main(int, char**) {
     RUN_TEST(test_phase_wraps_multiple_periods);
     RUN_TEST(test_reset_restarts_phase);
     RUN_TEST(test_write_if_changed_suppression);
+    RUN_TEST(test_blip_lights_the_led_mid_beat);
+    RUN_TEST(test_blip_lights_the_led_with_no_tempo);
+    RUN_TEST(test_blip_expires_and_the_beat_kept_running);
     return UNITY_END();
 }

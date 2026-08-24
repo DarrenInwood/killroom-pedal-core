@@ -5,6 +5,7 @@
 
 static float s_phase_ms  = 0.0f;
 static bool  s_led_on    = false;  // last written state; avoid redundant pin writes
+static float s_blip_ms   = 0.0f;   // remaining MIDI-activity dwell
 
 static void set_led(bool on)
 {
@@ -19,6 +20,7 @@ void tempo_led::init()
 {
     pedal_core::hal::panel_led_pins_init();
     s_phase_ms = 0.0f;
+    s_blip_ms  = 0.0f;
     s_led_on   = true;   // force write on first set_led(false)
     set_led(false);
 }
@@ -28,8 +30,28 @@ void tempo_led::reset()
     s_phase_ms = 0.0f;
 }
 
+void tempo_led::blip()
+{
+    s_blip_ms = BLIP_MS;
+}
+
 void tempo_led::update(float dt_ms, uint32_t period_ms)
 {
+    // A blip wins over the beat, and over a dark LED: an algorithm with no tempo
+    // still has to be able to say a MIDI message arrived.
+    if (s_blip_ms > 0.0f) {
+        s_blip_ms -= dt_ms;
+        // The beat keeps running underneath, so the LED rejoins it in phase rather
+        // than restarting the bar wherever the blip happened to end.
+        if (period_ms != 0u) {
+            s_phase_ms += dt_ms;
+            const float fp = (float)period_ms;
+            while (s_phase_ms >= fp) s_phase_ms -= fp;
+        }
+        set_led(true);
+        return;
+    }
+
     if (period_ms == 0u) {
         set_led(false);
         return;
