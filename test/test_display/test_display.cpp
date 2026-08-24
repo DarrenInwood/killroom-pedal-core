@@ -183,6 +183,37 @@ void test_draw_text_right_aligns(void) {
     TEST_ASSERT_EQUAL_UINT8(FONT_5X8['H' - 0x20][0], s_fb[2][30 - 12]);
 }
 
+// text_width returns the true pen-advance sum for a string wider than 255 px rather
+// than the sum wrapped mod 256. The panel is 128 px, so no caller reaches this today;
+// the return type is uint16_t so that a longer string cannot quietly report a small
+// width and fool the right-align and font-fit callers that divide by it.
+void test_text_width_wide_string_no_truncation(void) {
+    // Minimal one-glyph font: 'A', advance 3.
+    static const uint8_t  w[1] = {2};
+    static const uint8_t  a[1] = {3};
+    static const uint16_t o[1] = {0};
+    static const uint8_t  b[2] = {0xFF, 0xFF};
+    const display::Font f = {8, 7, (uint8_t)'A', 1, w, a, o, b};
+
+    char s[101];                                 // 100 glyphs x advance 3 = 300 px
+    for (int i = 0; i < 100; ++i) s[i] = 'A';
+    s[100] = '\0';
+    TEST_ASSERT_EQUAL_UINT16(300, display::text_width(f, s));   // not 300 % 256 = 44
+}
+
+// The fixed-font right-align holds its pixel count in a width wide enough for a long
+// run, so a string wider than its field stays left-aligned instead of wrapping mod 256
+// into a shift that looks like it fits.
+void test_draw_text_right_wide_string_left_aligns(void) {
+    char s[45];                                  // 44 chars x CHAR_ADVANCE(6) = 264 px
+    for (int i = 0; i < 44; ++i) s[i] = 'A';
+    s[44] = '\0';
+    display::draw_text_right(0, 0, s, 100);      // 264 > 100: it cannot be right-aligned
+    // 264 mod 256 = 8, which is < 100, so the unwidened version shifted x by 92 and left
+    // column 0 blank. Held at x = 0, the first glyph column lands there.
+    TEST_ASSERT_EQUAL_UINT8(FONT_5X8['A' - 0x20][0], s_fb[0][0]);
+}
+
 // compose_hslide composites two captured frames into the framebuffer as a
 // horizontal slide. Fill `from`/`to` so each column carries a unique, side-tagged
 // byte — `from` columns are 0..127, `to` columns are 128..255 — so every output
@@ -366,6 +397,8 @@ int main(int, char**) {
     RUN_TEST(test_var_font_spans_the_whole_printable_range);
     RUN_TEST(test_text_width_agrees_with_the_glyph_range);
     RUN_TEST(test_draw_text_right_aligns);
+    RUN_TEST(test_text_width_wide_string_no_truncation);
+    RUN_TEST(test_draw_text_right_wide_string_left_aligns);
     RUN_TEST(test_compose_hslide_endpoints_show_single_frame);
     RUN_TEST(test_compose_hslide_dir_pos_slides_to_in_from_right);
     RUN_TEST(test_compose_hslide_dir_neg_slides_to_in_from_left);

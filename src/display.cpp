@@ -402,25 +402,25 @@ void display::draw_text_clipped(const Font& f, uint8_t x, uint8_t y, const char*
     while (*str && x < x_max) x = blit_glyph(f, x, y, *str++, x_max, true);
 }
 
-uint8_t display::text_width(const Font& f, const char* str)
+uint16_t display::text_width(const Font& f, const char* str)
 {
     uint16_t w = 0;
     for (const char* p = str; *p; ++p) w += f.advances[glyph_index(f, *p)];
-    return (uint8_t)w;
+    return w;
 }
 
 void display::draw_text_right(const Font& f, uint8_t x_right, uint8_t y, const char* str)
 {
-    const uint8_t w = text_width(f, str);
+    const uint16_t w = text_width(f, str);
     draw_text(f, (uint8_t)(w <= x_right ? x_right - w : 0u), y, str);
 }
 
 void display::draw_text_right(uint8_t x, uint8_t page, const char* str, uint8_t width)
 {
-    uint8_t len = 0;
+    uint16_t len = 0;
     for (const char* p = str; *p; ++p) ++len;
-    const uint8_t text_px = len * CHAR_ADVANCE;
-    if (text_px < width) x += (width - text_px);
+    const uint16_t text_px = (uint16_t)(len * CHAR_ADVANCE);
+    if (text_px < width) x += (uint8_t)(width - text_px);
     draw_text(x, page, str);
 }
 

@@ -4,7 +4,9 @@
 // Tap tempo and MIDI clock synchronisation.
 // Tap: call tap() on each footswitch press; BPM is averaged over last N taps.
 // MIDI clock: call midi_clock_tick() on every MIDI clock message (24 per beat).
-// MIDI clock takes priority over tap when active.
+// Tap takes priority over MIDI clock: a tap that measures a tempo clears the clock-sync
+// flag, and the pedal follows the clock again only once sync is re-armed (a preset load,
+// or the Sync setting toggled). tempo_controller owns that arbitration.
 namespace tap_tempo {
     void  init();
     bool  tap();                     // record a tap; true only when it measured a new tempo

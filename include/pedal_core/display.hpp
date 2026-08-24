@@ -45,8 +45,10 @@ namespace display {
     void    draw_text(const Font& f, uint8_t x, uint8_t y, const char* str);
     // Like draw_text but cut off at x_max — including mid-glyph — to use every pixel.
     void    draw_text_clipped(const Font& f, uint8_t x, uint8_t y, const char* str, uint8_t x_max);
-    // Pixel width (sum of pen advances) the string would occupy.
-    uint8_t text_width(const Font& f, const char* str);
+    // Pixel width (sum of pen advances) the string would occupy. Returned as
+    // uint16_t so a string wider than 255 px reports its true width instead of
+    // wrapping mod 256, which would fool the right-align / font-fit callers.
+    uint16_t text_width(const Font& f, const char* str);
     // Draw a string ending its right edge at x_right (right-aligned).
     void    draw_text_right(const Font& f, uint8_t x_right, uint8_t y, const char* str);
 
