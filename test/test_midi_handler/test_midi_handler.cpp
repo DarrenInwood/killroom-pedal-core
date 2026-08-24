@@ -792,6 +792,24 @@ void test_the_gap_between_the_two_changes_nothing(void) {
         TEST_ASSERT_EQUAL_STRING(together[i].c_str(), g_order[i].c_str());
 }
 
+
+// Running status is a claim about what the device downstream has already been told.
+// A routing change can mean it was told nothing -- here the jack was Off while a status
+// went past -- so the next message has to carry its status again rather than trusting a
+// shadow of a wire that was not connected.
+void test_a_routing_change_restates_the_status(void) {
+    feed_uart({0xB0, 0x07, 0x40});                 // status B0 now on the wire
+    midi_handler::Config c = midi_handler::get_config();
+    c.out_mode = midi_handler::OutMode::Off;       // jack silent
+    midi_handler::set_config(c);
+    feed_uart({0xB0, 0x08, 0x50});                 // dropped entirely
+    c.out_mode = midi_handler::OutMode::Merge;     // and back
+    midi_handler::set_config(c);
+    uart::g_thru.clear();
+    feed_uart({0xB0, 0x09, 0x60});
+    TEST_ASSERT_EQUAL_INT(3, (int)uart::g_thru.size());   // must re-state B0
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_cc_dispatch_on_matching_channel);
@@ -835,5 +853,6 @@ int main(int, char**) {
     RUN_TEST(test_board_burst_honours_the_controllers_order);
     RUN_TEST(test_nothing_is_missed_while_the_preset_loads);
     RUN_TEST(test_the_gap_between_the_two_changes_nothing);
+    RUN_TEST(test_a_routing_change_restates_the_status);
     return UNITY_END();
 }

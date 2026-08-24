@@ -430,7 +430,16 @@ void midi_handler::update()
 
 void midi_handler::set_channel(uint8_t ch) { s_config.channel = ch; }
 void midi_handler::set_omni(bool omni)     { s_config.omni = omni; }
-void midi_handler::set_config(const Config& cfg) { s_config = cfg; }
+void midi_handler::set_config(const Config& cfg)
+{
+    s_config = cfg;
+    // Forget which status byte is on the wire. Running status is a claim about what the
+    // device downstream has already been told, and a routing change can mean it was told
+    // nothing -- the jack having been Off, or carrying another source -- so the next
+    // message re-states its status. Re-stating one is never wrong, only occasionally a
+    // byte that was not strictly needed.
+    s_din_running = 0;
+}
 const midi_handler::Config& midi_handler::get_config() { return s_config; }
 
 uint8_t midi_handler::tx_channel()
