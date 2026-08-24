@@ -22,9 +22,13 @@ namespace uart {
     void write(uint8_t b) { g_thru.push_back(b); }
 }
 namespace usb_midi {
-    static std::deque<uint8_t> g_rx;
+    static std::deque<uint8_t>  g_rx;
+    static std::vector<uint8_t> g_tx;         // messages the router put on USB
+    static std::vector<std::vector<uint8_t>> g_tx_sysex;
     bool read(uint8_t& b) { if (g_rx.empty()) return false; b = g_rx.front(); g_rx.pop_front(); return true; }
-    // init/task/send/send_sysex are not referenced by midi_handler.cpp
+    void send(const uint8_t* m, uint8_t n) { g_tx.insert(g_tx.end(), m, m + n); }
+    void send_sysex(const uint8_t* f, uint16_t n) { g_tx_sysex.emplace_back(f, f + n); }
+    // init/task are not referenced by midi_handler.cpp
 }
 
 // --- recording stubs for the dispatch callbacks ----------------------------
@@ -74,6 +78,15 @@ void setUp(void) {
     // so running status / SysEx accumulation never leaks across tests.
     s_uart_parser = Parser{};
     s_usb_parser  = Parser{};
+    // The DIN router's lock and queue are file-static too, and a test that leaves a
+    // SysEx half-forwarded would otherwise hand the lock to the next one.
+    usb_midi::g_tx.clear();
+    usb_midi::g_tx_sysex.clear();
+    s_din_locked = false;
+    s_din_queued = 0;
+    s_sysex_always     = nullptr;
+    s_sysex_always_len = 0;
+    midi_handler::set_config(midi_handler::Config{});   // every default is today's behaviour
     midi_handler::init(0, false);   // channel 0, omni off
 }
 void tearDown(void) {}
@@ -185,8 +198,12 @@ void test_sysex_buffer_is_bounded(void) {
     for (int i = 0; i < 1000; ++i) uart::g_rx.push_back(0x01);
     uart::g_rx.push_back(0xF7);
     midi_handler::update();
-    TEST_ASSERT_EQUAL_INT(1, (int)g_sysex.size());
-    TEST_ASSERT_EQUAL_INT(512, (int)g_sysex[0].size());
+    // A frame that outgrew the buffer is dropped, not handed on truncated: the
+    // bytes past the bound are gone, so what is left is a different frame, and a
+    // product would reject it one layer down for having no closing F7 anyway.
+    TEST_ASSERT_EQUAL_INT(0, (int)g_sysex.size());
+    // It still reaches the jack in full, because forwarding streams rather than buffers.
+    TEST_ASSERT_EQUAL_INT(1002, (int)uart::g_thru.size());
 }
 
 void test_midi_thru_echoes_uart_but_not_usb(void) {
@@ -219,6 +236,198 @@ void test_note_off_status_byte_dispatches(void) {
     TEST_ASSERT_EQUAL_UINT8(0x20, g_note_off[0].vel);
 }
 
+// ---------------------------------------------------------------------------
+// The DIN Out router
+// ---------------------------------------------------------------------------
+
+// Merge is the default and carries both directions; the other three each drop
+// one of them, which is the whole point of the control.
+void test_out_mode_thru_drops_the_pedals_own_messages(void) {
+    midi_handler::Config c = midi_handler::get_config();
+    c.out_mode = midi_handler::OutMode::Thru;
+    midi_handler::set_config(c);
+
+    feed_uart({0xB0, 0x07, 0x40});
+    TEST_ASSERT_EQUAL_INT(3, (int)uart::g_thru.size());   // the echo still runs
+
+    uart::g_thru.clear();
+    const uint8_t own[3] = {0xB0, 0x0F, 0x02};
+    midi_handler::send_own(own, 3);
+    TEST_ASSERT_EQUAL_INT(0, (int)uart::g_thru.size());   // but the pedal stays silent
+}
+
+void test_out_mode_out_drops_the_echo(void) {
+    midi_handler::Config c = midi_handler::get_config();
+    c.out_mode = midi_handler::OutMode::Out;
+    midi_handler::set_config(c);
+
+    feed_uart({0xB0, 0x07, 0x40});
+    TEST_ASSERT_EQUAL_INT(0, (int)uart::g_thru.size());
+    TEST_ASSERT_EQUAL_INT(1, (int)g_cc.size());           // still acted on locally
+
+    const uint8_t own[3] = {0xB0, 0x0F, 0x02};
+    midi_handler::send_own(own, 3);
+    TEST_ASSERT_EQUAL_INT(3, (int)uart::g_thru.size());
+}
+
+void test_out_mode_off_silences_the_jack(void) {
+    midi_handler::Config c = midi_handler::get_config();
+    c.out_mode = midi_handler::OutMode::Off;
+    midi_handler::set_config(c);
+
+    feed_uart({0xB0, 0x07, 0x40, 0xF8});
+    const uint8_t own[3] = {0xB0, 0x0F, 0x02};
+    midi_handler::send_own(own, 3);
+    midi_handler::send_own_realtime(0xF8);
+    TEST_ASSERT_EQUAL_INT(0, (int)uart::g_thru.size());
+}
+
+// The reason messages are forwarded whole rather than byte by byte: a frame in
+// flight owns the jack, and anything else waits behind it.
+void test_own_message_waits_behind_an_inbound_sysex(void) {
+    feed_uart({0xF0, 0x7D, 0x01});             // a frame starts and does not finish
+    TEST_ASSERT_EQUAL_INT(3, (int)uart::g_thru.size());
+
+    const uint8_t own[3] = {0xB0, 0x0F, 0x02};
+    midi_handler::send_own(own, 3);
+    TEST_ASSERT_EQUAL_INT(3, (int)uart::g_thru.size());   // held, not spliced in
+
+    feed_uart({0xF7});
+    // EOX first, then the message that was waiting.
+    TEST_ASSERT_EQUAL_INT(7, (int)uart::g_thru.size());
+    TEST_ASSERT_EQUAL_UINT8(0xF7, uart::g_thru[3]);
+    TEST_ASSERT_EQUAL_UINT8(0xB0, uart::g_thru[4]);
+    TEST_ASSERT_EQUAL_UINT8(0x0F, uart::g_thru[5]);
+    TEST_ASSERT_EQUAL_UINT8(0x02, uart::g_thru[6]);
+}
+
+// Real-time is the one thing the spec lets through a frame, so the lock ignores it.
+void test_own_realtime_passes_through_an_inbound_sysex(void) {
+    feed_uart({0xF0, 0x7D});
+    midi_handler::send_own_realtime(0xF8);
+    TEST_ASSERT_EQUAL_INT(3, (int)uart::g_thru.size());
+    TEST_ASSERT_EQUAL_UINT8(0xF8, uart::g_thru[2]);
+}
+
+// Running status is expanded on the way out, so each forwarded message is whole.
+void test_running_status_is_expanded_when_forwarded(void) {
+    feed_uart({0xB0, 0x01, 0x10, 0x02, 0x20});
+    TEST_ASSERT_EQUAL_INT(6, (int)uart::g_thru.size());
+    TEST_ASSERT_EQUAL_UINT8(0xB0, uart::g_thru[3]);
+    TEST_ASSERT_EQUAL_UINT8(0x02, uart::g_thru[4]);
+    TEST_ASSERT_EQUAL_UINT8(0x20, uart::g_thru[5]);
+}
+
+void test_clock_thru_off_stops_forwarding_the_clock_family(void) {
+    midi_handler::Config c = midi_handler::get_config();
+    c.clock_thru = false;
+    midi_handler::set_config(c);
+
+    feed_uart({0xF8, 0xFA, 0xFC, 0xFB});
+    TEST_ASSERT_EQUAL_INT(0, (int)uart::g_thru.size());
+    TEST_ASSERT_EQUAL_INT(1, g_clock);          // still drives the tempo layer
+    TEST_ASSERT_EQUAL_INT(2, g_clock_reset);
+}
+
+// Active Sensing describes one link, so it never travels -- on any setting.
+void test_active_sensing_is_never_forwarded(void) {
+    feed_uart({0xFE});
+    TEST_ASSERT_EQUAL_INT(0, (int)uart::g_thru.size());
+}
+
+// ---------------------------------------------------------------------------
+// Cross-routing: the pedal as a MIDI interface
+// ---------------------------------------------------------------------------
+void test_din_to_usb_forwards_messages_and_frames(void) {
+    midi_handler::Config c = midi_handler::get_config();
+    c.usb_din = midi_handler::UsbDinRoute::DinToUsb;
+    midi_handler::set_config(c);
+
+    feed_uart({0xB0, 0x07, 0x40});
+    TEST_ASSERT_EQUAL_INT(3, (int)usb_midi::g_tx.size());
+
+    feed_uart({0xF0, 0x7D, 0x01, 0x70, 0xF7});
+    TEST_ASSERT_EQUAL_INT(1, (int)usb_midi::g_tx_sysex.size());
+    TEST_ASSERT_EQUAL_INT(5, (int)usb_midi::g_tx_sysex[0].size());
+}
+
+void test_usb_to_din_needs_the_route_and_an_echoing_out_mode(void) {
+    feed_usb({0xB0, 0x07, 0x40});
+    TEST_ASSERT_EQUAL_INT(0, (int)uart::g_thru.size());   // Off by default
+
+    midi_handler::Config c = midi_handler::get_config();
+    c.usb_din = midi_handler::UsbDinRoute::UsbToDin;
+    midi_handler::set_config(c);
+    feed_usb({0xB0, 0x07, 0x40});
+    TEST_ASSERT_EQUAL_INT(3, (int)uart::g_thru.size());
+
+    // OutMode::Out carries only the pedal's own traffic, so the crossing stops.
+    uart::g_thru.clear();
+    c.out_mode = midi_handler::OutMode::Out;
+    midi_handler::set_config(c);
+    feed_usb({0xB0, 0x07, 0x40});
+    TEST_ASSERT_EQUAL_INT(0, (int)uart::g_thru.size());
+}
+
+// ---------------------------------------------------------------------------
+// Receive filters
+// ---------------------------------------------------------------------------
+void test_rx_pc_off_drops_program_change_but_forwards_it(void) {
+    midi_handler::Config c = midi_handler::get_config();
+    c.rx_pc = false;
+    midi_handler::set_config(c);
+
+    feed_uart({0xC0, 0x05});
+    TEST_ASSERT_EQUAL_INT(0, (int)g_pc.size());
+    TEST_ASSERT_EQUAL_INT(2, (int)uart::g_thru.size());   // the board below still gets it
+}
+
+void test_rx_sysex_off_drops_frames_but_keeps_the_named_commands(void) {
+    static const uint8_t always[] = { 0x70u, 0x21u };
+    midi_handler::set_sysex_always_accepted(always, 2);
+    midi_handler::Config c = midi_handler::get_config();
+    c.rx_sysex = false;
+    midi_handler::set_config(c);
+
+    feed_uart({0xF0, 0x7D, 0x01, 0x12, 0x00, 0xF7});      // a preset write: refused
+    TEST_ASSERT_EQUAL_INT(0, (int)g_sysex.size());
+
+    feed_uart({0xF0, 0x7D, 0x01, 0x70, 0xF7});            // identity: always answered
+    TEST_ASSERT_EQUAL_INT(1, (int)g_sysex.size());
+    TEST_ASSERT_EQUAL_UINT8(0x70, g_sysex[0][3]);
+}
+
+// ---------------------------------------------------------------------------
+// The transmit channel
+// ---------------------------------------------------------------------------
+void test_tx_channel_follows_rx_until_one_is_set(void) {
+    midi_handler::set_channel(4);
+    TEST_ASSERT_EQUAL_UINT8(4, midi_handler::tx_channel());
+
+    midi_handler::Config c = midi_handler::get_config();
+    c.tx_channel = 9;
+    midi_handler::set_config(c);
+    TEST_ASSERT_EQUAL_UINT8(9, midi_handler::tx_channel());
+}
+
+// The case Omni gets wrong wherever it is one setting with the channel: a pedal
+// listening to every channel still has exactly one it speaks on.
+void test_omni_does_not_move_the_transmit_channel(void) {
+    midi_handler::Config c = midi_handler::get_config();
+    c.channel    = 6;
+    c.omni       = true;
+    c.tx_channel = midi_handler::TX_CHANNEL_FOLLOW_RX;
+    midi_handler::set_config(c);
+    TEST_ASSERT_EQUAL_UINT8(6, midi_handler::tx_channel());
+
+    c.tx_channel = 2;
+    midi_handler::set_config(c);
+    TEST_ASSERT_EQUAL_UINT8(2, midi_handler::tx_channel());
+
+    feed_uart({0xB9, 0x07, 0x40});                        // still hears channel 9
+    TEST_ASSERT_EQUAL_INT(1, (int)g_cc.size());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_cc_dispatch_on_matching_channel);
@@ -237,5 +446,19 @@ int main(int, char**) {
     RUN_TEST(test_sysex_buffer_is_bounded);
     RUN_TEST(test_midi_thru_echoes_uart_but_not_usb);
     RUN_TEST(test_bare_data_byte_without_status_is_ignored);
+    RUN_TEST(test_out_mode_thru_drops_the_pedals_own_messages);
+    RUN_TEST(test_out_mode_out_drops_the_echo);
+    RUN_TEST(test_out_mode_off_silences_the_jack);
+    RUN_TEST(test_own_message_waits_behind_an_inbound_sysex);
+    RUN_TEST(test_own_realtime_passes_through_an_inbound_sysex);
+    RUN_TEST(test_running_status_is_expanded_when_forwarded);
+    RUN_TEST(test_clock_thru_off_stops_forwarding_the_clock_family);
+    RUN_TEST(test_active_sensing_is_never_forwarded);
+    RUN_TEST(test_din_to_usb_forwards_messages_and_frames);
+    RUN_TEST(test_usb_to_din_needs_the_route_and_an_echoing_out_mode);
+    RUN_TEST(test_rx_pc_off_drops_program_change_but_forwards_it);
+    RUN_TEST(test_rx_sysex_off_drops_frames_but_keeps_the_named_commands);
+    RUN_TEST(test_tx_channel_follows_rx_until_one_is_set);
+    RUN_TEST(test_omni_does_not_move_the_transmit_channel);
     return UNITY_END();
 }

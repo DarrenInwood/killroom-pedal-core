@@ -75,10 +75,24 @@ void PedalBase::on_midi_cc(uint8_t cc, uint8_t value)
 
 void PedalBase::on_midi_program_change(uint8_t program)
 {
-    const uint16_t slot = (uint16_t)(m_midi_bank * 128u + program);
+    // The offset shifts the whole map, banks included, so a 1-based controller
+    // addressing bank 1 program 0 still reaches the slot below its bank boundary
+    // rather than falling off the bottom of it.
+    const int32_t addressed = (int32_t)(m_midi_bank * 128u + program) - (int32_t)pc_offset();
+    if (addressed < 0) return;                             // below the first slot
+    const uint16_t slot = (uint16_t)addressed;
     if (slot >= preset_count()) return;                    // ignored, not wrapped
     if (slot == current_slot() && !preset_dirty()) return; // no-op: no audio duck
     load_slot_from_midi(slot);
+}
+
+bool PedalBase::slot_to_pc(uint16_t slot, uint8_t& bank, uint8_t& program) const
+{
+    const uint32_t addressed = (uint32_t)slot + pc_offset();
+    if (addressed >= 128u * 128u) return false;
+    bank    = (uint8_t)(addressed / 128u);
+    program = (uint8_t)(addressed % 128u);
+    return true;
 }
 
 void PedalBase::on_midi_sysex(const uint8_t* data, uint16_t len)
