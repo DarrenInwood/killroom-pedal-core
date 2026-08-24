@@ -17,14 +17,36 @@ inline uint8_t percent(uint32_t done, uint32_t total)
     return (uint8_t)(done * 100u / total);
 }
 
-// Write "Received NN%" into buf (needs >= 14 bytes), null-terminated. Avoids snprintf
-// so the bootloader stays small. pct is clamped to 100.
-inline void format_received(char* buf, uint8_t pct)
+// Write "<via> <text>" into buf, null-terminated, and return the length written.
+//
+// `via` names the transport an upload is arriving on, and may be null — the text then
+// stands alone rather than carrying a leading space, which is what the screen shown before
+// any host has claimed the session needs. Naming the wire earns its space on a 21-column
+// line because the pedal listens on USB and MIDI DIN at once and only one of them drives
+// any given upload: someone watching an updater that is getting no reply can then see on
+// the pedal itself that the other wire holds the session, a state otherwise invisible from
+// either end.
+//
+// No bounds check and no snprintf, so the bootloader stays small: every caller passes a
+// fixed string into a buffer sized for the longest of them.
+inline uint8_t format_status(char* buf, const char* via, const char* text)
+{
+    uint8_t i = 0;
+    if (via) {
+        while (*via) buf[i++] = *via++;
+        buf[i++] = ' ';
+    }
+    while (*text) buf[i++] = *text++;
+    buf[i] = 0;
+    return i;
+}
+
+// Write "Received NN%" into buf (needs >= 14 bytes, plus strlen(via) + 1 when `via` is
+// given), null-terminated. pct is clamped to 100.
+inline void format_received(char* buf, uint8_t pct, const char* via = nullptr)
 {
     if (pct > 100u) pct = 100u;
-    const char* p = "Received ";
-    uint8_t i = 0;
-    while (*p) buf[i++] = *p++;
+    uint8_t i = format_status(buf, via, "Received ");
     if (pct >= 100u) { buf[i++] = '1'; buf[i++] = '0'; buf[i++] = '0'; }
     else { if (pct >= 10u) buf[i++] = (char)('0' + pct / 10u); buf[i++] = (char)('0' + pct % 10u); }
     buf[i++] = '%';
