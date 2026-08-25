@@ -56,6 +56,11 @@ public:
     virtual void set_status(bool badge_on);            // header ♪ badge (tempo slaved)
     virtual void set_param(uint8_t slot, const char* name, const char* value_str,
                            uint16_t bar = NO_BAR);
+    // Where the pot itself is pointing while a knob waits to be picked up, on the
+    // parameter scale. The gauge shows the value; this shows the pot, so the gap between
+    // the two is the distance left to turn. NO_BAR while the knob is live and the gauge
+    // already tells the whole story.
+    virtual void set_param_pickup(uint8_t slot, uint16_t pot);
     virtual void set_page(uint8_t page, uint8_t num_pages);
     virtual void set_focus(Focus f);
     virtual void set_save_prompt(bool show);
@@ -125,6 +130,11 @@ protected:
     static constexpr uint8_t PNAME_Y = 27u;
     static constexpr uint8_t GAUGE_Y = 40u;
     static constexpr uint8_t GAUGE_H = 5u;
+    // The pickup tick sits in the gap between the parameter name and its gauge, so it
+    // never disappears into the filled part of the bar it is being compared against.
+    static constexpr uint8_t PICKUP_Y = 38u;
+    static constexpr uint8_t PICKUP_H = 2u;
+    static constexpr uint8_t PICKUP_W = 2u;
     static constexpr uint8_t PVAL_Y  = 46u;
     static constexpr uint8_t HINT_Y  = 58u;
     static constexpr uint8_t TITLE_Y = 1u, TITLE_RULE_Y = 13u;
@@ -155,6 +165,7 @@ protected:
     char       m_param_name[MAX_COLS][14] = {};
     char       m_param_val [MAX_COLS][16] = {};
     uint16_t   m_param_bar [MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
+    uint16_t   m_param_pickup[MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
     uint8_t    m_page = 0, m_num_pages = 1;
     uint8_t    m_name_cursor = 0;
     bool       m_save_prompt = false;

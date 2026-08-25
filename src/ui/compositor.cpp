@@ -218,6 +218,16 @@ void Compositor::draw_param_grid()
             display::draw_gauge((uint8_t)(x0 + 2u), GAUGE_Y, (uint8_t)(w - 4u),
                                 GAUGE_H, gauge_of(m_param_bar[i]));
 
+        // A knob waiting to be picked up: a tick above the gauge marking where the pot
+        // is pointing. The value stays where it is until the pot crosses it, so the gap
+        // between tick and bar end is exactly how much further there is to turn.
+        if (m_param_pickup[i] != NO_BAR) {
+            const uint8_t track = (uint8_t)(w - 4u);
+            const uint8_t span  = (uint8_t)(track > PICKUP_W ? track - PICKUP_W : 0u);
+            const uint8_t off   = (uint8_t)(((uint32_t)gauge_of(m_param_pickup[i]) * span) / 127u);
+            display::fill_rect((uint8_t)(x0 + 2u + off), PICKUP_Y, PICKUP_W, PICKUP_H, true);
+        }
+
         char val[16];
         to_display(val, m_param_val[i], sizeof(val) - 1u, true);
         if (val[0]) {
@@ -302,8 +312,13 @@ void Compositor::draw_normal()
     draw_param_grid();
     // Persistent "unsaved edits" hint tucked along the bottom edge. Suppressed while any
     // transient banner/card owns this row (m_overlay != None); it reappears once that clears.
-    if (m_save_prompt && m_overlay == Overlay::None)
-        draw_centered(display::FONT_SMALL, 0, OLED_WIDTH, HINT_Y, "Hold both switches to save");
+    if (m_save_prompt && m_overlay == Overlay::None) {
+        // The highlighted widget names the mode, so it also settles which half of the
+        // answer is worth the row: in Edit the press that saves is right there under the
+        // hand, while in Play it is two gestures away and only the fact matters.
+        draw_centered(display::FONT_SMALL, 0, OLED_WIDTH, HINT_Y,
+                      m_focus == Focus::Preset ? "Unsaved edits" : "Press to save");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -577,6 +592,14 @@ void Compositor::set_param(uint8_t slot, const char* name, const char* value_str
     strncpy(m_param_val[slot],  value_str, sizeof(m_param_val[slot])  - 1);
     m_param_val[slot][sizeof(m_param_val[slot]) - 1] = '\0';
     m_param_bar[slot] = bar;
+    m_dirty = true;
+}
+
+void Compositor::set_param_pickup(uint8_t slot, uint16_t pot)
+{
+    if (slot >= MAX_COLS) return;
+    if (m_param_pickup[slot] == pot) return;   // held every tick while armed; redraw once
+    m_param_pickup[slot] = pot;
     m_dirty = true;
 }
 
