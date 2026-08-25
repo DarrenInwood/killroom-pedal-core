@@ -32,7 +32,7 @@ namespace external_input {
     // assignment has to keep meaning what it meant.
     enum class Action : uint8_t {
         None = 0, Bypass, Tap, PresetUp, PresetDown, AlgoUp, AlgoDown,
-        MomentaryBypass, Freeze, RotarySpeed, RotaryBrake, Compare, Count
+        MomentaryBypass, Freeze, RotarySpeed, RotaryBrake, Compare, Scene, Count
     };
     static_assert((uint8_t)Action::Count == EXT_ACTION_COUNT, "Action enum vs EXT_ACTION_COUNT");
 
@@ -54,6 +54,7 @@ namespace external_input {
             case Action::RotarySpeed:     return "Rotary Speed";
             case Action::RotaryBrake:     return "Rotary Brake";
             case Action::Compare:         return "Compare";
+            case Action::Scene:           return "Scene A/B";
             default:                      return "Off";   // None / out of range
         }
     }
