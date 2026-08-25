@@ -1,11 +1,19 @@
 #pragma once
 #include <cstdint>
 
-// Debounced two-footswitch gesture grammar: press vs hold per switch, plus
-// Both_Hold — both switches held simultaneously for the full hold window,
-// timed from the later press, so a brief overlap of two singles never fires
-// it. What each gesture *does* (bypass, tap, boost, preset step, save) is the
-// product's policy; this module only names the gestures.
+// Debounced two-footswitch gesture grammar: press vs hold, per switch.
+//
+// The two switches are wholly independent. Each reports its own press, its own
+// hold, and the end of that hold; pressing both at once simply reports both, so
+// there is no combination gesture to learn, to time, or to trigger by accident
+// in the dark. What each gesture *does* (bypass, tap, freeze, rotary brake) is
+// the product's policy; this module only names the gestures.
+//
+// A press is emitted on release and only when no hold fired, so a hold never
+// also reads as a press. A hold fires once while the switch is down and is
+// closed by FSn_HoldRelease when the foot comes off — the pair is what lets a
+// product implement a momentary action (lean on it for a freeze, release to
+// return) rather than only a latching one.
 //
 // Raw switch state arrives through pedal_core::hal::fs_pressed(); the product
 // supplies FOOTSWITCH_DEBOUNCE_MS and FOOTSWITCH_HOLD_MS via its
@@ -15,11 +23,12 @@ namespace footswitch {
 
     enum class Event : uint8_t {
         None = 0,
-        FS1_Press,      // short press released
-        FS1_Hold,       // held for FOOTSWITCH_HOLD_MS
+        FS1_Press,        // short press, emitted on release
+        FS1_Hold,         // held for FOOTSWITCH_HOLD_MS
+        FS1_HoldRelease,  // that hold ended
         FS2_Press,
         FS2_Hold,
-        Both_Hold,      // both held simultaneously for FOOTSWITCH_HOLD_MS
+        FS2_HoldRelease,
     };
 
     void  init();

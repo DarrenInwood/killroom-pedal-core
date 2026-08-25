@@ -14,6 +14,15 @@ static void push_event(footswitch::Event e)
     if (next != s_ev_tail) { s_events[s_ev_head] = e; s_ev_head = next; }
 }
 
+// Per-switch event triples, indexed by switch. Keeping them in one table is what
+// lets update() treat the two switches as the same code path rather than two.
+static constexpr footswitch::Event k_press[2] = {
+    footswitch::Event::FS1_Press, footswitch::Event::FS2_Press };
+static constexpr footswitch::Event k_hold[2] = {
+    footswitch::Event::FS1_Hold, footswitch::Event::FS2_Hold };
+static constexpr footswitch::Event k_hold_release[2] = {
+    footswitch::Event::FS1_HoldRelease, footswitch::Event::FS2_HoldRelease };
+
 struct SwState {
     bool     raw        = false;
     bool     debounced  = false;
@@ -34,8 +43,9 @@ void footswitch::update()
 {
     const uint32_t now = systick::now_ms();
 
-    // Pass 1: update all debounce states so both pressed flags are current
-    // before the hold-interaction check in pass 2.
+    // Each switch is decided entirely on its own state. Neither the debounce nor
+    // the hold consults the other switch, so both feet down is simply both
+    // switches reporting, in whatever order they settle.
     for (uint8_t i = 0; i < 2; ++i) {
         SwState& sw = s_sw[i];
         const bool raw = pedal_core::hal::fs_pressed(i);
@@ -52,49 +62,22 @@ void footswitch::update()
                 sw.hold_fired = false;
                 sw.press_ms   = now;
             } else {
-                if (sw.pressed && !sw.hold_fired) {
-                    // Short press: emit only if the other switch isn't held —
-                    // both-held belongs to pass 2.
-                    const bool other_pressed = s_sw[1 - i].pressed;
-                    if (!other_pressed) {
-                        push_event(i == 0 ? Event::FS1_Press : Event::FS2_Press);
-                    }
-                }
+                // A release closes whichever gesture was open: the hold it
+                // started, or — if the foot came off before the hold window —
+                // a short press. Never both.
+                if (sw.pressed)
+                    push_event(sw.hold_fired ? k_hold_release[i] : k_press[i]);
                 sw.pressed = false;
             }
         }
-    }
 
-    // Pass 2: hold detection. Both pressed flags reflect this tick's state, so
-    // the Both_Hold check is accurate even when both switches debounce on the
-    // same tick.
-    //
-    // Both_Hold needs both switches held *simultaneously* for
-    // FOOTSWITCH_HOLD_MS, timed from the later of the two presses — the start
-    // of the overlap. A save is a deliberate two-foot hold: a switch that
-    // joins late must itself be held for the full window, so a brief overlap
-    // never saves.
-    if (s_sw[0].pressed && s_sw[1].pressed &&
-        !s_sw[0].hold_fired && !s_sw[1].hold_fired)
-    {
-        const uint32_t overlap_start = (s_sw[0].press_ms > s_sw[1].press_ms)
-                                     ? s_sw[0].press_ms : s_sw[1].press_ms;
-        if ((now - overlap_start) >= FOOTSWITCH_HOLD_MS) {
-            s_sw[0].hold_fired = true;
-            s_sw[1].hold_fired = true;
-            push_event(Event::Both_Hold);
-        }
-    }
-
-    // An individual hold fires only while its switch is held alone — with the
-    // other down, the gesture belongs to the Both_Hold check above.
-    for (uint8_t i = 0; i < 2; ++i) {
-        SwState& sw = s_sw[i];
-        if (sw.pressed && !sw.hold_fired && !s_sw[1 - i].pressed &&
+        // The hold fires once, mid-press, so a momentary action engages while the
+        // foot is still down rather than waiting for it to lift.
+        if (sw.pressed && !sw.hold_fired &&
             (now - sw.press_ms) >= FOOTSWITCH_HOLD_MS)
         {
             sw.hold_fired = true;
-            push_event(i == 0 ? Event::FS1_Hold : Event::FS2_Hold);
+            push_event(k_hold[i]);
         }
     }
 }
