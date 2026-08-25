@@ -174,8 +174,16 @@ static constexpr uint8_t CTX_ROW_H = 8u;
 // only; every product screen is a bespoke full-screen layout that never reaches here.)
 void Compositor::draw_context_line()
 {
-    const bool    multi   = m_num_pages > 1u;
-    const uint8_t split_x = multi ? (uint8_t)(OLED_WIDTH - page_widget_width()) : OLED_WIDTH;
+    // The right of the row carries one of two things. Where the product has named what its
+    // second footswitch does, that wins: the switch is labelled FUNCTION on the panel
+    // precisely because its job changes with the algorithm, so the screen is the only place
+    // that can say which job it has right now. Otherwise the page indicator has the space.
+    const bool    fn      = m_function[0] != '\0';
+    const uint8_t fn_w    = fn ? (uint8_t)(display::text_width(display::FONT_SMALL, m_function) + 2u) : 0u;
+    const bool    multi   = !fn && m_num_pages > 1u;
+    const uint8_t split_x = fn    ? (uint8_t)(OLED_WIDTH - fn_w)
+                          : multi ? (uint8_t)(OLED_WIDTH - page_widget_width())
+                                  : OLED_WIDTH;
 
     // The name fills the region left of the split (the whole row when no page widget).
     uint8_t name_right = split_x;   // exclusive right boundary of the name region
@@ -187,8 +195,11 @@ void Compositor::draw_context_line()
     display::draw_text_clipped(display::FONT_SMALL, 1, ALGO_Y, m_context_name,
                                (uint8_t)(name_right > 0u ? name_right - 1u : 0u));
 
+    if (fn) {
+        display::draw_text(display::FONT_SMALL, (uint8_t)(split_x + 1u), ALGO_Y, m_function);
+    }
     // Page widget, left-aligned in its region with a 1px margin (only when >1 page).
-    if (multi) {
+    else if (multi) {
         char pg[12];
         snprintf(pg, sizeof(pg), "Page %u/%u",
                  (unsigned)(m_page + 1u), (unsigned)m_num_pages);
@@ -600,6 +611,15 @@ void Compositor::set_param_pickup(uint8_t slot, uint16_t pot)
     if (slot >= MAX_COLS) return;
     if (m_param_pickup[slot] == pot) return;   // held every tick while armed; redraw once
     m_param_pickup[slot] = pot;
+    m_dirty = true;
+}
+
+void Compositor::set_function_label(const char* label)
+{
+    const char* v = label ? label : "";
+    if (strncmp(m_function, v, sizeof(m_function) - 1) == 0) return;
+    strncpy(m_function, v, sizeof(m_function) - 1);
+    m_function[sizeof(m_function) - 1] = '\0';
     m_dirty = true;
 }
 

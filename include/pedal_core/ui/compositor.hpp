@@ -62,6 +62,11 @@ public:
     // already tells the whole story.
     virtual void set_param_pickup(uint8_t slot, uint16_t pot);
     virtual void set_page(uint8_t page, uint8_t num_pages);
+    // What the product's second footswitch does on the running algorithm, for the right of
+    // the context row. Empty gives the row back to the page indicator — the two share the
+    // space because they are never both worth saying: a page number means nothing where the
+    // knobs are not walking pages, and the switch's job is the thing a foot needs to know.
+    virtual void set_function_label(const char* label);
     virtual void set_focus(Focus f);
     virtual void set_save_prompt(bool show);
     virtual void set_screen(uint8_t screen_id);
@@ -167,6 +172,7 @@ protected:
     uint16_t   m_param_bar [MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
     uint16_t   m_param_pickup[MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
     uint8_t    m_page = 0, m_num_pages = 1;
+    char       m_function[14] = "";
     uint8_t    m_name_cursor = 0;
     bool       m_save_prompt = false;
     bool       m_status_badge = false;
