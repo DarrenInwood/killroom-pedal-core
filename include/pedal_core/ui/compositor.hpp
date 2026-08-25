@@ -66,6 +66,11 @@ public:
     // the context row. Empty gives the row back to the page indicator — the two share the
     // space because they are never both worth saying: a page number means nothing where the
     // knobs are not walking pages, and the switch's job is the thing a foot needs to know.
+    // Longest label the row will hold, in characters. Sized for the longest name in the
+    // family's action vocabulary ("Algorithm Down", 14) with a character to spare — a
+    // label past this is truncated silently, which reads as a misspelling rather than as
+    // a layout problem. test_external_input holds the vocabulary to it.
+    static constexpr uint8_t FUNCTION_LABEL_MAX = 15u;
     virtual void set_function_label(const char* label);
     virtual void set_focus(Focus f);
     virtual void set_save_prompt(bool show);
@@ -172,7 +177,7 @@ protected:
     uint16_t   m_param_bar [MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
     uint16_t   m_param_pickup[MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
     uint8_t    m_page = 0, m_num_pages = 1;
-    char       m_function[14] = "";
+    char       m_function[FUNCTION_LABEL_MAX + 1u] = "";
     uint8_t    m_name_cursor = 0;
     bool       m_save_prompt = false;
     bool       m_status_badge = false;
