@@ -56,6 +56,15 @@ inline constexpr uint8_t PRESET_DUMP_REQ  = 0x10u;  // no payload = live state; 
 inline constexpr uint8_t PRESET_DUMP_DATA = 0x11u;
 inline constexpr uint8_t PRESET_RESTORE   = 0x12u;  // a dump frame sent back at the pedal
 inline constexpr uint8_t PRESET_SAVE      = 0x13u;  // <bank><prog> where SAVE_ADDRESSED is advertised
+// Change what the running preset says about its Play knobs, its scene or its
+// footswitches, without touching anything else it holds. The payload is a TLV list
+// using the preset frame's own MACROS / SCENE / SWITCHES tags, so a fourth extra
+// needs a tag rather than another command. A tag the frame omits is left alone; a
+// zero-length tag clears that field back to "the algorithm's answer".
+//
+// Live state, like SET_NAME and SET_BPM: it takes effect at once and a save is what
+// persists it. A restore writes storage instead, and cannot reach the running sound.
+inline constexpr uint8_t SET_PRESET_EXTRAS = 0x14u;
 inline constexpr uint8_t SET_CHANNEL      = 0x20u;
 inline constexpr uint8_t FETCH_GLOBAL     = 0x21u;
 inline constexpr uint8_t GLOBAL_DATA      = 0x22u;
@@ -92,6 +101,7 @@ inline constexpr uint16_t UID            = 1u << 7;  // answers UID_REQ
 inline constexpr uint16_t SAVE_ADDRESSED = 1u << 8;  // PRESET_SAVE takes <bank><prog>
 inline constexpr uint16_t BOOST          = 1u << 9;  // presets carry a second sound, the preset's BOOST tag
 inline constexpr uint16_t MIDI_ROUTING   = 1u << 10; // SET_MIDI and the global MIDI_ROUTING tag
+inline constexpr uint16_t PRESET_EXTRAS  = 1u << 11; // SET_PRESET_EXTRAS and the MACROS/SCENE/SWITCHES tags
 }  // namespace cap
 
 // --- TLV tags ---------------------------------------------------------------
@@ -104,6 +114,21 @@ inline constexpr uint8_t TEMPO = 0x02u;  // <sync 0|1> <bpm_x10_lo7> <bpm_x10_hi
 // plus a signed step count for products that switch an input filter with it. Absent
 // means the product has no second sound, or that it equals the primary.
 inline constexpr uint8_t BOOST = 0x03u;  // <algorithm> <p0_lo7> <p0_hi7> ... <tighten+64>
+// The four controls a preset puts under the knobs in performance, as parameter indices.
+// UNSET leaves one to the algorithm's own choice, which is what a preset that has never
+// been told otherwise says. Absent means the same for all four.
+inline constexpr uint8_t MACROS   = 0x04u;  // <m0> <m1> <m2> <m3>
+// A second value for each of those four: the sound a scene switch jumps to. Absent means
+// the preset has no scene, which is not the same as a scene whose values happen to be zero.
+inline constexpr uint8_t SCENE    = 0x05u;  // <s0_lo7> <s0_hi7> ... <s3_lo7> <s3_hi7>
+// What this preset's own footswitches do, where it wants something other than the
+// algorithm's answer: press and hold for each of the two. UNSET is the algorithm's answer.
+inline constexpr uint8_t SWITCHES = 0x06u;  // <fs1_press> <fs1_hold> <fs2_press> <fs2_hold>
+
+// "Not set" on the wire. The record's own sentinels differ per field (0xFF for a macro,
+// 0x0F for a switch) and neither is worth exporting: one is not a legal SysEx data byte at
+// all, and the other is a value a longer action list could one day reach.
+inline constexpr uint8_t UNSET = 0x7Fu;
 }  // namespace preset_tag
 
 namespace global_tag {

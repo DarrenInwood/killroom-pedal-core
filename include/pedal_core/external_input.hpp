@@ -28,8 +28,11 @@ namespace external_input {
 
     // Action a switch is assigned to. Values mirror the product's EXT_* codes / the persisted byte / the
     // SysEx payload; the static_assert keeps the count in lock-step with EXT_ACTION_COUNT.
+    // Append-only: the value is the persisted byte and the SysEx payload, so an existing
+    // assignment has to keep meaning what it meant.
     enum class Action : uint8_t {
-        None = 0, Bypass, Tap, PresetUp, PresetDown, AlgoUp, AlgoDown, Count
+        None = 0, Bypass, Tap, PresetUp, PresetDown, AlgoUp, AlgoDown,
+        MomentaryBypass, Freeze, RotarySpeed, RotaryBrake, Compare, Scene, Count
     };
     static_assert((uint8_t)Action::Count == EXT_ACTION_COUNT, "Action enum vs EXT_ACTION_COUNT");
 
@@ -40,14 +43,33 @@ namespace external_input {
     inline const char* action_name(Action a)
     {
         switch (a) {
-            case Action::Bypass:     return "Bypass";
-            case Action::Tap:        return "Tap Tempo";
-            case Action::PresetUp:   return "Preset Up";
-            case Action::PresetDown: return "Preset Down";
-            case Action::AlgoUp:     return "Algorithm Up";
-            case Action::AlgoDown:   return "Algorithm Down";
-            default:                 return "Off";   // None / out of range
+            case Action::Bypass:          return "Bypass";
+            case Action::Tap:             return "Tap Tempo";
+            case Action::PresetUp:        return "Preset Up";
+            case Action::PresetDown:      return "Preset Down";
+            case Action::AlgoUp:          return "Algorithm Up";
+            case Action::AlgoDown:        return "Algorithm Down";
+            case Action::MomentaryBypass: return "Mom. Bypass";
+            case Action::Freeze:          return "Freeze";
+            case Action::RotarySpeed:     return "Rotary Speed";
+            case Action::RotaryBrake:     return "Rotary Brake";
+            case Action::Compare:         return "Compare";
+            case Action::Scene:           return "Scene A/B";
+            default:                      return "Off";   // None / out of range
         }
+    }
+
+    // Whether an action lasts only as long as the switch is held. A momentary action
+    // engages on the hold and returns on the release, so a player can lean on a freeze,
+    // play over it, and let go; everything else fires once and is done.
+    //
+    // This is what the hold/hold-release event pair exists for, and it is why the
+    // footswitch hold threshold is a musical one rather than a menu one.
+    inline bool action_is_momentary(Action a)
+    {
+        return a == Action::MomentaryBypass
+            || a == Action::Freeze
+            || a == Action::RotaryBrake;
     }
 
     void   init();                          // safe default config (Expression); mode applied in boot()

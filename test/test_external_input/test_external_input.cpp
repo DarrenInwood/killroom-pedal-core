@@ -11,6 +11,8 @@
 #include <cstdint>
 
 #include <pedal_core/external_input.hpp>
+#include <pedal_core/ui/compositor.hpp>    // FUNCTION_LABEL_MAX
+#include <cstring>
 #include "pedal_core_ui_config.hpp"        // FOOTSWITCH_DEBOUNCE_MS
 #include "pedal_core_extinput_config.hpp"  // EXT_DEFAULT_* actions
 
@@ -155,6 +157,22 @@ void test_set_action_bounds(void) {
     TEST_ASSERT_EQUAL_INT((int)Action::None, (int)external_input::action(Switch::Count));
 }
 
+// Every action has a name, and every name fits the row that shows it. The context line
+// carries what the second footswitch currently does, and a name too long for that buffer
+// is truncated silently — which reads on the pedal as a misspelling rather than as a
+// layout problem, so nobody would think to look here.
+void test_every_action_is_named_and_fits_the_row(void) {
+    for (uint8_t v = 0; v < (uint8_t)Action::Count; ++v) {
+        const char* name = external_input::action_name((Action)v);
+        TEST_ASSERT_NOT_NULL(name);
+        // "Off" is None's name; any other action falling back to it is a missing case.
+        if (v != (uint8_t)Action::None)
+            TEST_ASSERT_TRUE_MESSAGE(strcmp(name, "Off") != 0, name);
+        TEST_ASSERT_TRUE_MESSAGE(
+            strlen(name) <= pedal_core::ui::Compositor::FUNCTION_LABEL_MAX, name);
+    }
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_tip_press);
@@ -167,5 +185,6 @@ int main(int, char**) {
     RUN_TEST(test_set_mode_clears_pending);
     RUN_TEST(test_events_fifo_order);
     RUN_TEST(test_set_action_bounds);
+    RUN_TEST(test_every_action_is_named_and_fits_the_row);
     return UNITY_END();
 }
