@@ -56,6 +56,15 @@ inline constexpr uint8_t PRESET_DUMP_REQ  = 0x10u;  // no payload = live state; 
 inline constexpr uint8_t PRESET_DUMP_DATA = 0x11u;
 inline constexpr uint8_t PRESET_RESTORE   = 0x12u;  // a dump frame sent back at the pedal
 inline constexpr uint8_t PRESET_SAVE      = 0x13u;  // <bank><prog> where SAVE_ADDRESSED is advertised
+// Change what the running preset says about its Play knobs, its scene or its
+// footswitches, without touching anything else it holds. The payload is a TLV list
+// using the preset frame's own MACROS / SCENE / SWITCHES tags, so a fourth extra
+// needs a tag rather than another command. A tag the frame omits is left alone; a
+// zero-length tag clears that field back to "the algorithm's answer".
+//
+// Live state, like SET_NAME and SET_BPM: it takes effect at once and a save is what
+// persists it. A restore writes storage instead, and cannot reach the running sound.
+inline constexpr uint8_t SET_PRESET_EXTRAS = 0x14u;
 inline constexpr uint8_t SET_CHANNEL      = 0x20u;
 inline constexpr uint8_t FETCH_GLOBAL     = 0x21u;
 inline constexpr uint8_t GLOBAL_DATA      = 0x22u;
@@ -92,6 +101,7 @@ inline constexpr uint16_t UID            = 1u << 7;  // answers UID_REQ
 inline constexpr uint16_t SAVE_ADDRESSED = 1u << 8;  // PRESET_SAVE takes <bank><prog>
 inline constexpr uint16_t BOOST          = 1u << 9;  // presets carry a second sound, the preset's BOOST tag
 inline constexpr uint16_t MIDI_ROUTING   = 1u << 10; // SET_MIDI and the global MIDI_ROUTING tag
+inline constexpr uint16_t PRESET_EXTRAS  = 1u << 11; // SET_PRESET_EXTRAS and the MACROS/SCENE/SWITCHES tags
 }  // namespace cap
 
 // --- TLV tags ---------------------------------------------------------------
