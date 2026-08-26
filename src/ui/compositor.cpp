@@ -134,6 +134,17 @@ void Compositor::draw_header(uint32_t now)
     display::draw_text_right(display::FONT_NAME, OLED_WIDTH,
                              (uint8_t)((RULE_Y - display::FONT_NAME.height) / 2u), num);
 
+    // Unsaved edits, as a dot just left of the number -- the mark a text editor puts on a
+    // modified file. It is a state rather than an instruction, so it costs a few pixels
+    // beside the thing it is about instead of a whole row; the bottom edge is the
+    // footswitch labels'. The name region shrinks to leave it room, and the dot sits
+    // inside the header highlight so it photo-negates with the rest of the row.
+    constexpr uint8_t DOT = 3u, DOT_GAP = 3u;
+    const uint8_t dot_w = m_save_prompt ? (uint8_t)(DOT + DOT_GAP) : 0u;
+    if (m_save_prompt)
+        display::fill_rect((uint8_t)(num_x - dot_w), (uint8_t)((RULE_Y - DOT) / 2u),
+                           DOT, DOT, true);
+
     // Preset name (or context-name fallback) between the icon and the number,
     // truncated at a char boundary so it ends cleanly.
     char name_disp[sizeof(m_preset_name)];
@@ -148,7 +159,7 @@ void Compositor::draw_header(uint32_t now)
     // overflows, clip mid-character (never dropping whole characters) at a 2px gap before
     // the number.
     const uint8_t name_x   = (uint8_t)(inset + 3u);
-    const uint8_t x_max    = (uint8_t)(num_x - 2u);
+    const uint8_t x_max    = (uint8_t)(num_x - 2u - dot_w);
     const uint8_t region_w = (uint8_t)(x_max - name_x);
     const display::Font* nf = nullptr;
     if      (display::text_width(display::FONT_NAME,    big) <= region_w) nf = &display::FONT_NAME;
@@ -331,14 +342,16 @@ void Compositor::draw_normal()
     draw_header(m_icon_now);
     draw_context_line();
     draw_param_grid();
-    // Persistent "unsaved edits" hint tucked along the bottom edge. Suppressed while any
-    // transient banner/card owns this row (m_overlay != None); it reappears once that clears.
-    if (m_save_prompt && m_overlay == Overlay::None) {
-        // The highlighted widget names the mode, so it also settles which half of the
-        // answer is worth the row: in Edit the press that saves is right there under the
-        // hand, while in Play it is two gestures away and only the fact matters.
-        draw_centered(display::FONT_SMALL, 0, OLED_WIDTH, HINT_Y,
-                      m_focus == Focus::Preset ? "Unsaved edits" : "Press to save");
+    // What the two footswitches do, along the bottom edge: the first at the left and the
+    // second at the right, so each label sits over the switch it names. Suppressed while a
+    // transient banner or card owns this row (m_overlay != None); it returns once that
+    // clears. The two longest names in the action vocabulary still fit side by side.
+    if (m_overlay == Overlay::None) {
+        if (m_switch_label[0][0])
+            display::draw_text(display::FONT_SMALL, 0, HINT_Y, m_switch_label[0]);
+        if (m_switch_label[1][0])
+            display::draw_text_right(display::FONT_SMALL, OLED_WIDTH, HINT_Y,
+                                     m_switch_label[1]);
     }
 }
 
@@ -630,6 +643,20 @@ void Compositor::set_param_pickup(uint8_t slot, uint16_t pot)
     if (m_param_pickup[slot] == pot) return;   // held every tick while armed; redraw once
     m_param_pickup[slot] = pot;
     m_dirty = true;
+}
+
+void Compositor::set_switch_labels(const char* fs1, const char* fs2)
+{
+    const char* v[2] = { fs1 ? fs1 : "", fs2 ? fs2 : "" };
+    bool changed = false;
+    for (uint8_t i = 0; i < 2u; ++i) {
+        if (strncmp(m_switch_label[i], v[i], sizeof(m_switch_label[i]) - 1) == 0) continue;
+        strncpy(m_switch_label[i], v[i], sizeof(m_switch_label[i]) - 1);
+        m_switch_label[i][sizeof(m_switch_label[i]) - 1] = '\0';
+        changed = true;
+    }
+    // Pushed every tick, so the redraw is worth spending only when the words move.
+    if (changed) m_dirty = true;
 }
 
 void Compositor::set_function_label(const char* label)

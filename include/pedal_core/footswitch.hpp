@@ -35,4 +35,11 @@ namespace footswitch {
     void  update();
     Event get_event();     // returns and clears the oldest pending event
     bool  has_event();
+
+    // How long switch `sw` (0 or 1) has been down, debounced; 0 while it is up. The
+    // gesture grammar above is edge-triggered, so this is the one way to ask what a foot
+    // is doing right now -- which is what a screen showing the hold actions while a
+    // switch is under a foot needs, before the hold has fired and there is anything to
+    // report as an event.
+    uint32_t down_for_ms(uint8_t sw);
 }

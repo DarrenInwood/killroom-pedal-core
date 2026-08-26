@@ -82,6 +82,12 @@ void footswitch::update()
     }
 }
 
+uint32_t footswitch::down_for_ms(uint8_t sw)
+{
+    if (sw >= 2u || !s_sw[sw].pressed) return 0u;
+    return systick::now_ms() - s_sw[sw].press_ms;
+}
+
 bool footswitch::has_event()
 {
     return s_ev_head != s_ev_tail;

@@ -73,6 +73,11 @@ public:
     // a layout problem. test_external_input holds the vocabulary to it.
     static constexpr uint8_t FUNCTION_LABEL_MAX = 15u;
     virtual void set_function_label(const char* label);
+    // What the two footswitches do right now, along the bottom edge: the first at the
+    // left and the second at the right, each over the switch it names. A product that
+    // pushes the hold actions while a foot is down turns the row into a preview of what
+    // keeping it down will do. Either label empty simply leaves that side blank.
+    virtual void set_switch_labels(const char* fs1, const char* fs2);
     virtual void set_focus(Focus f);
     virtual void set_save_prompt(bool show);
     virtual void set_screen(uint8_t screen_id);
@@ -181,6 +186,7 @@ protected:
     uint16_t   m_param_pickup[MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
     uint8_t    m_page = 0, m_num_pages = 1;
     char       m_function[FUNCTION_LABEL_MAX + 1u] = "";
+    char       m_switch_label[2][FUNCTION_LABEL_MAX + 1u] = {};
     uint8_t    m_name_cursor = 0;
     bool       m_save_prompt = false;
     bool       m_status_badge = false;
