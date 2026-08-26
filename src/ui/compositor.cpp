@@ -289,10 +289,12 @@ void Compositor::draw_title(const char* title, bool with_page)
 }
 
 // The family name editor: the name centered with the cursor cell inverted and flanked
-// by up/down spinners; knob P1 moves the cursor, P2 sets the character under it.
+// by up/down spinners; knob P1 moves the cursor, P2 sets the character under it. The
+// page chip is left off: the editor is one screen, and a chip reading "Page 1/1" is a
+// widget that can only ever say the same thing.
 void Compositor::draw_name_page()
 {
-    draw_title("Edit Name", /*with_page=*/true);
+    draw_title("Edit Name");
 
     char name_disp[sizeof(m_preset_name)];
     strncpy(name_disp, m_preset_name, sizeof(name_disp));

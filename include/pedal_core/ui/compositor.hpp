@@ -173,7 +173,9 @@ protected:
     uint16_t   m_preset = 0;
     char       m_preset_name[17]  = "";
     char       m_context_name[20] = "";
-    char       m_param_name[MAX_COLS][14] = {};
+    // A slot label is a knob's parameter on the grid, a settings row in the tree and a whole
+    // algorithm name in a browser list, so it is sized for the longest of those.
+    char       m_param_name[MAX_COLS][20] = {};
     char       m_param_val [MAX_COLS][16] = {};
     uint16_t   m_param_bar [MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
     uint16_t   m_param_pickup[MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
