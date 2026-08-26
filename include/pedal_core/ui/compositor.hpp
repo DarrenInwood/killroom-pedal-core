@@ -54,6 +54,7 @@ public:
     virtual void set_preset(uint16_t slot);
     virtual void set_preset_name(const char* name);
     virtual void set_status(bool badge_on);            // header ♪ badge (tempo slaved)
+    virtual void set_scene(bool badge_on);              // context-line B badge (Scene B sounding)
     virtual void set_param(uint8_t slot, const char* name, const char* value_str,
                            uint16_t bar = NO_BAR);
     // Where the pot itself is pointing while a knob waits to be picked up, on the
@@ -181,6 +182,7 @@ protected:
     uint8_t    m_name_cursor = 0;
     bool       m_save_prompt = false;
     bool       m_status_badge = false;
+    bool       m_scene_badge  = false;
 
 private:
     void draw_normal();
