@@ -20,6 +20,11 @@ publishing *mechanism* is the family's, the identity is not.
 id, and the slug names the published artifacts, so the manifest URL is built from
 it — changing either is a breaking change, not a rename.
 
+A release publishes a set of documents rather than one manual. Which documents, and
+what they are called, is the product's to say -- this family has a pedal that ships a
+quick start, a user guide and a reference, and one that ships neither -- so they
+arrive as repeated --doc arguments and the editor lists them in the order given.
+
 Standard library only.
 
 A product calls this through a shim carrying its own identity:
@@ -59,8 +64,11 @@ def main(argv: list[str], *, product: str, device_id: int, slug: str,
     parser.add_argument("--image", type=Path, help="the built .bin; omit to check the version only")
     parser.add_argument("--out", type=Path, help="where to write the manifest")
     parser.add_argument("--notes", default="", help="what changed, in a sentence a player cares about")
-    parser.add_argument("--manual", type=Path,
-                        help="the built manual PDF; published beside the image and named in the entry")
+    parser.add_argument("--doc", action="append", default=[], metavar="TITLE=KIND",
+                        help="a published document, e.g. \"User Guide=manual\". Repeatable, "
+                             "and order is the order the editor lists them in. KIND names "
+                             "the artifact: the entry gets <slug>-<kind>-<version>.pdf, and "
+                             "a file of that name must already be staged beside the manifest")
     args = parser.parse_args(argv[1:])
 
     version = version_from_source(header, macros)
@@ -83,9 +91,6 @@ def main(argv: list[str], *, product: str, device_id: int, slug: str,
         print(f"release_manifest: {args.image} does not exist — build it first", file=sys.stderr)
         return 1
 
-    if args.manual is not None and not args.manual.exists():
-        print(f"release_manifest: {args.manual} does not exist — build it first", file=sys.stderr)
-        return 1
 
     entry = {
         "deviceId": device_id,
@@ -95,19 +100,36 @@ def main(argv: list[str], *, product: str, device_id: int, slug: str,
         "url": f"{slug}-{version}.bin",
         "bytes": args.image.stat().st_size,
     }
-    # The manual is versioned with the firmware it documents, and published
-    # under a per-version name for the same reason the image is: a pedal in the
-    # field may be running an old version, and the pages describing it have to
-    # still be there. Overwriting one manual.pdf per release would leave every
-    # earlier release pointing at a document for firmware nobody has.
-    if args.manual is not None:
-        entry["manual"] = f"{slug}-manual-{version}.pdf"
+    # A document is versioned with the firmware it describes and published under a
+    # per-version name, for the same reason the image is: a pedal in the field may be
+    # running an older release, and the pages describing it have to still be there.
+    # Overwriting one guide.pdf per release would leave every earlier release pointing
+    # at a document for firmware nobody is running.
+    #
+    # The title is the product's to choose because the set is: this pedal ships a quick
+    # start, a user guide and a reference, and the next one may not.
+    docs = []
+    for spec in args.doc:
+        title, sep, kind = spec.partition("=")
+        title, kind = title.strip(), kind.strip()
+        if not (sep and title and kind):
+            print(f"release_manifest: --doc wants TITLE=KIND, got {spec!r}", file=sys.stderr)
+            return 1
+        name = f"{slug}-{kind}-{version}.pdf"
+        if not Path(name).exists():
+            print(f"release_manifest: {name} does not exist — stage it before writing the "
+                  "manifest, or the entry names a download that 404s", file=sys.stderr)
+            return 1
+        docs.append({"title": title, "url": name})
+    if docs:
+        entry["docs"] = docs
 
     notes = args.notes.strip()
     if notes:
         entry["notes"] = notes
 
     args.out.write_text(json.dumps({"releases": [entry]}, indent=2) + "\n", encoding="utf-8")
-    manual = f", manual {entry['manual']}" if "manual" in entry else ""
-    print(f"release_manifest: {product} {version}, {entry['bytes']} bytes{manual} -> {args.out}")
+    listed = ", ".join(d["url"] for d in docs)
+    print(f"release_manifest: {product} {version}, {entry['bytes']} bytes"
+          + (f", docs: {listed}" if listed else "") + f" -> {args.out}")
     return 0
