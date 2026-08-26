@@ -15,6 +15,10 @@ namespace pedal_core::ui {
 // Eighth-note glyph for the header status badge: 5 wide x 8 tall, column-major, LSB=top.
 static const uint8_t ICON_NOTE[5] = { 0xE0u, 0xE0u, 0xE0u, 0x7Fu, 0x07u };
 
+// The letter B, same 5x8 cell: the context-line badge for Scene B sounding. Scene A
+// draws nothing, because A is the ordinary state and most presets have no scene at all.
+static const uint8_t ICON_SCENE_B[5] = { 0x7Fu, 0x49u, 0x49u, 0x36u, 0x00u };
+
 // ---------------------------------------------------------------------------
 // Static helpers
 // ---------------------------------------------------------------------------
@@ -186,12 +190,16 @@ void Compositor::draw_context_line()
                                   : OLED_WIDTH;
 
     // The name fills the region left of the split (the whole row when no page widget).
+    // Each badge takes the next 5px off the right of that region, plus a 1px gap, so
+    // they stack leftwards from the split and the name simply gets less room.
     uint8_t name_right = split_x;   // exclusive right boundary of the name region
-    if (m_status_badge) {
-        const uint8_t note_x = (uint8_t)(name_right - 6u);  // 5px note + 1px gap
-        display::draw_icon(note_x, (uint8_t)(ALGO_Y - 1u), 5u, 8u, ICON_NOTE);
-        name_right = note_x;
-    }
+    const auto badge = [&](const uint8_t* icon) {
+        if (name_right < 6u) return;   // no room left; the name wins the row
+        name_right = (uint8_t)(name_right - 6u);
+        display::draw_icon(name_right, (uint8_t)(ALGO_Y - 1u), 5u, 8u, icon);
+    };
+    if (m_status_badge) badge(ICON_NOTE);
+    if (m_scene_badge)  badge(ICON_SCENE_B);
     display::draw_text_clipped(display::FONT_SMALL, 1, ALGO_Y, m_context_name,
                                (uint8_t)(name_right > 0u ? name_right - 1u : 0u));
 
@@ -592,6 +600,14 @@ void Compositor::set_status(bool badge_on)
     if (m_status_badge != badge_on) {
         m_status_badge = badge_on;
         m_dirty        = true;
+    }
+}
+
+void Compositor::set_scene(bool badge_on)
+{
+    if (m_scene_badge != badge_on) {
+        m_scene_badge = badge_on;
+        m_dirty       = true;
     }
 }
 

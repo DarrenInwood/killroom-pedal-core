@@ -65,6 +65,11 @@ inline constexpr uint8_t PRESET_SAVE      = 0x13u;  // <bank><prog> where SAVE_A
 // Live state, like SET_NAME and SET_BPM: it takes effect at once and a save is what
 // persists it. A restore writes storage instead, and cannot reach the running sound.
 inline constexpr uint8_t SET_PRESET_EXTRAS = 0x14u;
+// Put the pedal on one side of the preset's A/B, the way a footswitch set to Scene
+// A/B does: <0|1>, 0 = Scene A. Absolute rather than a toggle, so a host that has
+// just read SCENE_ACTIVE can ask for a known side instead of guessing which way the
+// latch points. A preset with no scene has nothing to jump to and ignores it.
+inline constexpr uint8_t SET_SCENE_ACTIVE = 0x15u;
 inline constexpr uint8_t SET_CHANNEL      = 0x20u;
 inline constexpr uint8_t FETCH_GLOBAL     = 0x21u;
 inline constexpr uint8_t GLOBAL_DATA      = 0x22u;
@@ -102,6 +107,11 @@ inline constexpr uint16_t SAVE_ADDRESSED = 1u << 8;  // PRESET_SAVE takes <bank>
 inline constexpr uint16_t BOOST          = 1u << 9;  // presets carry a second sound, the preset's BOOST tag
 inline constexpr uint16_t MIDI_ROUTING   = 1u << 10; // SET_MIDI and the global MIDI_ROUTING tag
 inline constexpr uint16_t PRESET_EXTRAS  = 1u << 11; // SET_PRESET_EXTRAS and the MACROS/SCENE/SWITCHES tags
+// The pedal reports which side of the A/B is sounding and can be put on either: the
+// SCENE_ACTIVE global tag, SET_SCENE_ACTIVE and CC 16. Separate from PRESET_EXTRAS
+// because a product can carry a scene and jump under a footswitch without being able
+// to say which half you are hearing, and a host must not guess at that.
+inline constexpr uint16_t SCENE_LATCH    = 1u << 12;
 }  // namespace cap
 
 // --- TLV tags ---------------------------------------------------------------
@@ -140,6 +150,10 @@ inline constexpr uint8_t BYPASS    = 0x13u;  // 0 bypassed, 1 active
 // gives. CHANNEL stays alongside it, carrying the same receive channel in the
 // older one-byte form, so a host that predates this tag still reads a channel.
 inline constexpr uint8_t MIDI_ROUTING = 0x14u;
+// Which side of the running preset's A/B is sounding: 0 Scene A, 1 Scene B. Read
+// rather than announced, like the rest of this frame — a host that polls the globals
+// sees a player's stomp on its next read.
+inline constexpr uint8_t SCENE_ACTIVE = 0x15u;
 }  // namespace global_tag
 
 // --- the MIDI routing block -------------------------------------------------
