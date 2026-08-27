@@ -32,7 +32,8 @@ namespace external_input {
     // assignment has to keep meaning what it meant.
     enum class Action : uint8_t {
         None = 0, Bypass, Tap, PresetUp, PresetDown, AlgoUp, AlgoDown,
-        MomentaryBypass, Freeze, RotarySpeed, RotaryBrake, Compare, Scene, Count
+        MomentaryBypass, Freeze, RotarySpeed, RotaryBrake, Compare, Scene,
+        MomFreeze, Count
     };
     static_assert((uint8_t)Action::Count == EXT_ACTION_COUNT, "Action enum vs EXT_ACTION_COUNT");
 
@@ -51,6 +52,7 @@ namespace external_input {
             case Action::AlgoDown:        return "Algorithm Down";
             case Action::MomentaryBypass: return "Mom. Bypass";
             case Action::Freeze:          return "Freeze";
+            case Action::MomFreeze:       return "Mom. Freeze";
             case Action::RotarySpeed:     return "Rotary Speed";
             case Action::RotaryBrake:     return "Rotary Brake";
             case Action::Compare:         return "Compare";
@@ -64,12 +66,84 @@ namespace external_input {
     // play over it, and let go; everything else fires once and is done.
     //
     // This is what the hold/hold-release event pair exists for, and it is why the
-    // footswitch hold threshold is a musical one rather than a menu one.
+    // footswitch hold threshold is a musical one rather than a menu one. Every action
+    // here is hold-only, and every hold-only action is here: what a switch does no longer
+    // depends on which gesture reached it.
     inline bool action_is_momentary(Action a)
     {
         return a == Action::MomentaryBypass
-            || a == Action::Freeze
+            || a == Action::MomFreeze
             || a == Action::RotaryBrake;
+    }
+
+    // Which gesture an action belongs on.
+    //
+    // A press is emitted on the release and has nothing left to hold, so a while-held
+    // action needs a hold to follow. A hold gives one event per lean on the switch, so
+    // tapping a tempo with it is not something anyone can do. Everything that fires once
+    // and is done works either way.
+    //
+    // These are what the settings rows offer, and what a stored assignment is translated
+    // against when a preset written before the split names the other one.
+    inline bool action_allows_hold(Action a)
+    {
+        return a != Action::Tap        // one tap per lean is not tapping a tempo
+            && a != Action::Freeze;    // the latching one; MomFreeze is the held one
+    }
+
+    inline bool action_allows_press(Action a)
+    {
+        return !action_is_momentary(a);   // nothing to release a press against
+    }
+
+    // The same action for the other gesture, or None where there is no counterpart. A
+    // preset that named one before the split is read as the other, so what it does is
+    // unchanged even though the code it stores now means something narrower.
+    inline Action action_for_gesture(Action a, bool hold)
+    {
+        if (hold  && a == Action::Freeze)          return Action::MomFreeze;
+        if (!hold && a == Action::MomFreeze)       return Action::Freeze;
+        if (!hold && a == Action::MomentaryBypass) return Action::Bypass;
+        return (hold ? action_allows_hold(a) : action_allows_press(a)) ? a : Action::None;
+    }
+
+    // The list a settings row sweeps for one gesture: only the actions that gesture can
+    // carry, in code order, with Off always first because code 0 is legal everywhere.
+    //
+    // A row steps a position through these rather than the raw codes, because the menu
+    // clamps a single contiguous range and a filtered vocabulary is not one. Keeping the
+    // three in one place is what stops the count, the lookup and the inverse drifting.
+    inline uint8_t action_count_for(bool hold)
+    {
+        uint8_t n = 0;
+        for (uint8_t i = 0; i < (uint8_t)Action::Count; ++i)
+            if (hold ? action_allows_hold((Action)i) : action_allows_press((Action)i)) ++n;
+        return n;
+    }
+
+    inline Action action_at(bool hold, uint8_t pos)
+    {
+        for (uint8_t i = 0; i < (uint8_t)Action::Count; ++i) {
+            if (!(hold ? action_allows_hold((Action)i) : action_allows_press((Action)i))) continue;
+            if (pos == 0u) return (Action)i;
+            --pos;
+        }
+        return Action::None;
+    }
+
+    // Where an action sits in that sweep. An action the gesture cannot carry has no
+    // position, and answers 0 -- Off -- so a row is always on a value it can step from.
+    // Callers translate through action_for_gesture() first, so what the row shows is what
+    // the switch will actually do.
+    inline uint8_t action_pos_of(Action a, bool hold)
+    {
+        uint8_t n = 0;
+        for (uint8_t i = 0; i < (uint8_t)Action::Count; ++i) {
+            if (!(hold ? action_allows_hold((Action)i) : action_allows_press((Action)i))) continue;
+            if ((Action)i == a) return n;
+            ++n;
+        }
+        return 0u;
     }
 
     void   init();                          // safe default config (Expression); mode applied in boot()

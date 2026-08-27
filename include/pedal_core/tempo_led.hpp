@@ -17,7 +17,13 @@ namespace tempo_led {
 
     void init();
     void reset();
-    void update(float dt_ms, uint32_t period_ms);
+
+    // `period_ms` is the beat to flash, or 0 where the algorithm has none. `idle_on` is
+    // what to show instead when there is no beat -- a state the footswitch beside this LED
+    // is holding, on a product whose switches can carry one. The beat outranks it: a tempo
+    // is the thing this LED is for, and something a player reads continuously beats
+    // something they already know because they are standing on it.
+    void update(float dt_ms, uint32_t period_ms, bool idle_on = false);
 
     // Show the beat's negative for at least BLIP_MS: dark where it would be lit, lit
     // where it would be dark, and simply lit where there is no beat at all. Lighting

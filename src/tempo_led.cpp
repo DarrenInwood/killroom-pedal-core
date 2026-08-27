@@ -35,7 +35,7 @@ void tempo_led::blip()
     s_blip_ms = BLIP_MS;
 }
 
-void tempo_led::update(float dt_ms, uint32_t period_ms)
+void tempo_led::update(float dt_ms, uint32_t period_ms, bool idle_on)
 {
     // The beat runs whatever else is happening, so a blip never knocks the bar out of
     // phase: the LED rejoins it where it would have been rather than one dwell late.
@@ -44,7 +44,7 @@ void tempo_led::update(float dt_ms, uint32_t period_ms)
     // that reads as a clear downbeat rather than a square blink. The phase wraps into
     // [0, period) by subtraction; dt_ms and period_ms are whole milliseconds, so it is
     // always integer-valued and each subtraction is exact — no fmodf on the per-tick path.
-    bool beat_on = false;
+    bool beat_on = idle_on;
     if (period_ms != 0u) {
         s_phase_ms += dt_ms;
         const float fp = (float)period_ms;
