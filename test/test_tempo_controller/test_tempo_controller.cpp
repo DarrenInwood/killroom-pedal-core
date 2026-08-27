@@ -42,6 +42,15 @@ public:
     void     set_tempo(float bpm) override { m_last_set_tempo = bpm; }
 };
 
+// An algorithm with no tempo-synced parameter — a reverb, a pitch shifter. IAlgorithm's
+// tempo_bpm() defaults to 0, which is the interface saying "I have no tempo", and is not
+// the same statement as a tempo of zero.
+class UntimedAlgorithm : public FakeAlgorithm {
+public:
+    int8_t tempo_param() const override { return -1; }
+    float  tempo_bpm()   const override { return 0.0f; }
+};
+
 static TempoController* g_tc = nullptr;
 static FakeAlgorithm*   g_a  = nullptr;
 
@@ -257,6 +266,23 @@ void test_show_clamps_param_bpm_to_range(void) {
     TEST_ASSERT_FLOAT_WITHIN(0.1f, BPM_MIN, g_tc->display_bpm());
 }
 
+// Loading a preset onto an algorithm that has no tempo of its own must leave the tempo
+// where it was. The readout is one thing, but the same number feeds the clock this pedal
+// generates for everything downstream, so treating "no tempo" as a tempo of zero would
+// drop every slaved device to the bottom of the range on a reverb preset.
+void test_an_algorithm_with_no_tempo_leaves_the_last_one_standing(void) {
+    g_a->m_tempo_bpm_val = 0.0f;
+    g_tc->on_tap(*g_a);                       // two taps to establish something
+    systick::fake_advance_ms(500);
+    g_tc->on_tap(*g_a);
+    const float established = g_tc->display_bpm();
+    TEST_ASSERT_TRUE(established > 0.0f);
+
+    UntimedAlgorithm untimed;
+    g_tc->on_preset_load(/*sync_on=*/false, untimed);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, established, g_tc->display_bpm());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_param_edit_shows_param_bpm_and_disarms);
@@ -276,5 +302,6 @@ int main(int, char**) {
     RUN_TEST(test_sync_change_enable_without_clock_arms_only);
     RUN_TEST(test_sync_change_disable_disarms);
     RUN_TEST(test_show_clamps_param_bpm_to_range);
+    RUN_TEST(test_an_algorithm_with_no_tempo_leaves_the_last_one_standing);
     return UNITY_END();
 }

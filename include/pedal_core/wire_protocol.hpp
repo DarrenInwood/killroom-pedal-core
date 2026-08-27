@@ -112,6 +112,11 @@ inline constexpr uint16_t PRESET_EXTRAS  = 1u << 11; // SET_PRESET_EXTRAS and th
 // because a product can carry a scene and jump under a footswitch without being able
 // to say which half you are hearing, and a host must not guess at that.
 inline constexpr uint16_t SCENE_LATCH    = 1u << 12;
+// The TEMPO tag's note-division bytes, and the SET_PRESET_EXTRAS tag that writes them.
+// Separate from TEMPO because a product can sync to a clock without letting the player
+// choose which note value the tempo drives. This is the last bit the field holds: the
+// mask is carried lo7/hi7, so a fifteenth capability needs DEVICE_INFO's field widened.
+inline constexpr uint16_t TEMPO_DIVISION = 1u << 13;
 }  // namespace cap
 
 // --- TLV tags ---------------------------------------------------------------
@@ -119,7 +124,15 @@ inline constexpr uint16_t SCENE_LATCH    = 1u << 12;
 // skipped by its length, which is what makes the layout extensible.
 namespace preset_tag {
 inline constexpr uint8_t EXPR  = 0x01u;  // <param 0x7F=off> <min_lo7> <min_hi7> <max_lo7> <max_hi7>
-inline constexpr uint8_t TEMPO = 0x02u;  // <sync 0|1> <bpm_x10_lo7> <bpm_x10_hi7>
+// The tempo. bpm_x10 is what the preset sounds like and is always present; the two bytes
+// after it say how that tempo is built — which note value one repeat or one LFO cycle
+// occupies, and how many octaves the parameter's range had to move that note to reach it
+// (biased by 4, so a stored 4 is a fold of 0). A reader that predates them takes the three
+// bytes it knows and skips the rest, and a writer that omits them is read as the plain
+// beat, so the record grew without a protocol version bump. The fold is ignored inbound:
+// it is a consequence of the note and the tempo, and the device recomputes it.
+inline constexpr uint8_t TEMPO = 0x02u;  // <sync 0|1> <bpm_lo7> <bpm_hi7> [<div> <fold+4>]
+inline constexpr uint8_t TEMPO_FOLD_BIAS = 4u;
 // The alternate sound a boost footswitch selects: a whole algorithm and parameter set,
 // plus a signed step count for products that switch an input filter with it. Absent
 // means the product has no second sound, or that it equals the primary.

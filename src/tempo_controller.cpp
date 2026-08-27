@@ -10,9 +10,14 @@ void TempoController::init()
 
 // Clamp to the shared BPM limits so a value derived from a parameter (e.g. a very short
 // delay) stays in a sane range. The tempo is conveyed by the Tempo LED, not the OLED;
-// m_display_bpm is still tracked for the preset's bpm_x10 field and the SysEx dump.
+// m_display_bpm is still tracked for the SysEx dump and the generated clock.
 void TempoController::show(float bpm, TempoSource src)
 {
+    // An algorithm with no tempo parameter has no tempo of its own, and IAlgorithm's
+    // tempo_bpm() answers 0 to say so. Leave the last tempo standing rather than clamping
+    // that 0 up to BPM_MIN: loading a reverb preset must not reset the readout, or the
+    // MIDI clock the pedal is mastering, to the bottom of the range.
+    if (!(bpm > 0.0f)) return;
     if (bpm < BPM_MIN) bpm = BPM_MIN;
     else if (bpm > BPM_MAX) bpm = BPM_MAX;
     m_display_bpm  = bpm;
