@@ -37,37 +37,32 @@ void tempo_led::blip()
 
 void tempo_led::update(float dt_ms, uint32_t period_ms)
 {
-    // A blip wins over the beat, and over a dark LED: an algorithm with no tempo
-    // still has to be able to say a MIDI message arrived.
+    // The beat runs whatever else is happening, so a blip never knocks the bar out of
+    // phase: the LED rejoins it where it would have been rather than one dwell late.
+    //
+    // 25% duty: lit for the first quarter of each beat, dark for the rest — a short flash
+    // that reads as a clear downbeat rather than a square blink. The phase wraps into
+    // [0, period) by subtraction; dt_ms and period_ms are whole milliseconds, so it is
+    // always integer-valued and each subtraction is exact — no fmodf on the per-tick path.
+    bool beat_on = false;
+    if (period_ms != 0u) {
+        s_phase_ms += dt_ms;
+        const float fp = (float)period_ms;
+        while (s_phase_ms >= fp) s_phase_ms -= fp;
+        beat_on = s_phase_ms < fp * 0.25f;
+    }
+
+    // A blip is the beat's negative, not a light. Forcing the LED on cannot be seen
+    // during the quarter it is already lit, which is exactly when a controller synced to
+    // the downbeat sends; inverting reads as a flash from either state. On an algorithm
+    // with no beat there is nothing to negate, so it is simply the LED coming on.
     if (s_blip_ms > 0.0f) {
         s_blip_ms -= dt_ms;
-        // The beat keeps running underneath, so the LED rejoins it in phase rather
-        // than restarting the bar wherever the blip happened to end.
-        if (period_ms != 0u) {
-            s_phase_ms += dt_ms;
-            const float fp = (float)period_ms;
-            while (s_phase_ms >= fp) s_phase_ms -= fp;
-        }
-        set_led(true);
+        set_led(!beat_on);
         return;
     }
 
-    if (period_ms == 0u) {
-        set_led(false);
-        return;
-    }
-
-    s_phase_ms += dt_ms;
-    // Wrap the phase into [0, period). dt_ms and period_ms are whole milliseconds,
-    // so the phase is always integer-valued and each subtraction is exact — no need
-    // for an fmodf call on the per-tick path.
-    const float fp = (float)period_ms;
-    while (s_phase_ms >= fp)
-        s_phase_ms -= fp;
-
-    // 25% duty: lit for the first quarter of each beat, dark for the rest — a short flash
-    // that reads as a clear downbeat rather than a square blink.
-    set_led(s_phase_ms < (float)period_ms * 0.25f);
+    set_led(beat_on);
 }
 
 #endif  // __has_include(pedal_core_tempo_config.hpp)

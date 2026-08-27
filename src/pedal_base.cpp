@@ -109,6 +109,10 @@ void PedalBase::on_midi_sysex(const uint8_t* data, uint16_t len)
     for (uint8_t i = 0; i < n; ++i) {
         if (table[i].cmd != cmd) continue;
         if (plen < table[i].min_len) return;               // short frames drop silently
+        // Past the manufacturer, the device ID, the terminator, a command this firmware
+        // knows and a payload long enough to be it: whatever happens inside the handler,
+        // this frame was addressed here and is being acted on.
+        midi_accepted();
         (this->*table[i].fn)(payload, plen);
         return;
     }

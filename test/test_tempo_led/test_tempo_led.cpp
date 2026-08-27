@@ -130,25 +130,44 @@ void test_blip_lights_the_led_with_no_tempo(void) {
     TEST_ASSERT_TRUE(led_on());
 }
 
-// The dwell is bounded, and the beat carried on underneath: after a blip that
-// spans a downbeat the LED is back in phase rather than restarted.
+// The dwell is bounded, and the beat carried on underneath: after a blip that spans a
+// downbeat the LED is back in phase rather than restarted.
 void test_blip_expires_and_the_beat_kept_running(void) {
     tempo_led::reset();
-    tempo_led::update(0.0f, 100u);   // phase 0, on
-    tempo_led::blip();
+    tempo_led::update(400.0f, 1000u);   // phase 400 -- past the lit quarter, so dark
+    TEST_ASSERT_FALSE(led_on());
 
-    tempo_led::update(10.0f, 100u);  // dwell 40 left, phase 10
-    tempo_led::update(30.0f, 100u);  // dwell 10 left, phase 40 -- the beat would be dark
+    tempo_led::blip();                  // 150 ms of the beat's negative
+    tempo_led::update(100.0f, 1000u);   // dwell 50 left, phase 500, beat dark -> lit
     TEST_ASSERT_TRUE(led_on());
 
-    tempo_led::update(20.0f, 100u);  // the pass that spends the dwell still lights it
+    tempo_led::update(50.0f, 1000u);    // the pass that spends the dwell still inverts
     TEST_ASSERT_TRUE(led_on());
-    tempo_led::update(0.0f, 100u);   // and the next one is back on the beat: phase 60
+    tempo_led::update(0.0f, 1000u);     // and the next is back on the beat: phase 550
     TEST_ASSERT_FALSE(led_on());
 
     // The phase advanced through the blip, so the next downbeat lands where the
     // beat says it should rather than one dwell late.
-    tempo_led::update(40.0f, 100u);  // phase wraps to 0
+    tempo_led::update(450.0f, 1000u);   // phase wraps to 0
+    TEST_ASSERT_TRUE(led_on());
+}
+
+// A blip is the beat's negative, not a light: on the lit quarter of a downbeat it
+// DARKENS the LED. Lighting it there would be invisible -- and the downbeat is exactly
+// where a controller synced to the tempo tends to send, so that was the case the
+// indicator missed.
+void test_blip_darkens_a_lit_beat(void) {
+    tempo_led::reset();
+    tempo_led::update(0.0f, 1000u);     // phase 0 -- inside the lit quarter
+    TEST_ASSERT_TRUE(led_on());
+
+    tempo_led::blip();
+    tempo_led::update(50.0f, 1000u);    // phase 50, still the lit quarter
+    TEST_ASSERT_FALSE(led_on());
+
+    // And it rejoins the beat once the dwell runs out, still inside that same quarter.
+    tempo_led::update(100.0f, 1000u);   // dwell spent on this pass; phase 150
+    tempo_led::update(0.0f, 1000u);
     TEST_ASSERT_TRUE(led_on());
 }
 
@@ -164,5 +183,6 @@ int main(int, char**) {
     RUN_TEST(test_blip_lights_the_led_mid_beat);
     RUN_TEST(test_blip_lights_the_led_with_no_tempo);
     RUN_TEST(test_blip_expires_and_the_beat_kept_running);
+    RUN_TEST(test_blip_darkens_a_lit_beat);
     return UNITY_END();
 }

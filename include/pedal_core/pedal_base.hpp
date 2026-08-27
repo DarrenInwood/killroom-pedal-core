@@ -88,6 +88,16 @@ protected:
     virtual const SysexEntry* sysex_table(uint8_t& count) const = 0;
     virtual uint8_t sysex_device_id() const = 0;
 
+    // A MIDI message got past every check that says it was meant for this pedal, and is
+    // about to change something. A product with an activity indicator lights it here.
+    //
+    // Called from the SysEx dispatch, because that is the one accepting path that lives
+    // in this layer: the manufacturer, the device ID and the command lookup are all
+    // checked here, so a shim could only fire before knowing any of them. The channel
+    // CCs and Program Change reach the product through its own overrides of the four
+    // *_from_midi hooks below, which is the same moment for them.
+    virtual void midi_accepted() {}
+
     // The product's CC map, served from its midi_protocol constants.
     struct CcMap {
         uint8_t bypass;        // relay CC
