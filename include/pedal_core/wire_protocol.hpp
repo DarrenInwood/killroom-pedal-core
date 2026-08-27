@@ -157,7 +157,11 @@ inline constexpr uint8_t UNSET = 0x7Fu;
 namespace global_tag {
 inline constexpr uint8_t CHANNEL   = 0x10u;  // 0-15, or 16 for omni
 inline constexpr uint8_t NOISE     = 0x11u;  // <enabled> <threshold> <depth>
-inline constexpr uint8_t EXT_INPUT = 0x12u;  // <mode> <tip> <ring> <both>
+// The jack's mode and what each of its three contacts does. Each contact carries a press
+// and a hold, and the three hold assignments are the optional tail: a device that predates
+// them sends four bytes, and a host that does reads seven. The record is length-prefixed,
+// so growing it needed no version bump on either side.
+inline constexpr uint8_t EXT_INPUT = 0x12u;  // <mode> <tip> <ring> <both> [<t_hold> <r_hold> <b_hold>]
 inline constexpr uint8_t BYPASS    = 0x13u;  // 0 bypassed, 1 active
 // The MIDI routing block, midi_routing::LEN bytes in the order that namespace
 // gives. CHANNEL stays alongside it, carrying the same receive channel in the

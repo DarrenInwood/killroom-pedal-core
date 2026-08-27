@@ -15,10 +15,11 @@
 //   pressing it closes tip and ring simultaneously — reported here as Both,
 //   distinct from Tip and Ring.
 //
-// Each of the three switches is assigned an Action (persisted in the settings block). set_mode() and
-// set_action() are called from Pedal::boot() with the stored values and whenever the user
-// changes them on the global External Input page. update() runs once per control tick from
-// main.cpp (inert in Expression mode); Pedal drains the events and runs the assigned action.
+// Each switch carries two gestures — a press and a hold — assigned an Action apiece and
+// persisted in the settings block. set_mode() and set_action() are called from Pedal::boot()
+// with the stored values and whenever the user changes them on the global External Input
+// page. update() runs once per control tick from main.cpp (inert in Expression mode); Pedal
+// drains the events and runs the assigned action.
 namespace external_input {
 
     enum class Mode : uint8_t { Expression = 0, Footswitch = 1 };
@@ -37,7 +38,25 @@ namespace external_input {
     };
     static_assert((uint8_t)Action::Count == EXT_ACTION_COUNT, "Action enum vs EXT_ACTION_COUNT");
 
-    enum class Event : uint8_t { None = 0, TipPress, RingPress, BothPress };
+    // Three events per switch, in press / hold / hold-release order, so the switch and the
+    // gesture are both arithmetic on the value rather than another table to keep in step.
+    //
+    // A press is emitted on the release and only where no hold fired; a hold fires mid-press
+    // so a momentary action engages while the foot is still down, and is closed by its
+    // release. The same grammar the front-panel switches use, for the same reason.
+    enum class Event : uint8_t {
+        None = 0,
+        TipPress,  TipHold,  TipHoldRelease,
+        RingPress, RingHold, RingHoldRelease,
+        BothPress, BothHold, BothHoldRelease,
+    };
+
+    enum class Gesture : uint8_t { Press = 0, Hold = 1, HoldRelease = 2 };
+
+    // Which switch an event came from, and which of its gestures. Undefined for Event::None,
+    // which every caller drops before asking.
+    inline Switch  event_switch(Event e)  { return (Switch)(((uint8_t)e - 1u) / 3u); }
+    inline Gesture event_gesture(Event e) { return (Gesture)(((uint8_t)e - 1u) % 3u); }
 
     // Full action name for the (full-screen) settings display. Matches the preset editor's
     // option labels; the longest, "Algorithm Down", is 14 chars.
@@ -149,8 +168,11 @@ namespace external_input {
     void   init();                          // safe default config (Expression); mode applied in boot()
     void   set_mode(Mode mode);             // (re)configure the jack's pins via the product's hal
     Mode   mode();
-    void   set_action(Switch sw, Action a); // assign a switch's action (Footswitch mode)
-    Action action(Switch sw);
+    // A switch's action for one of its two gestures (Footswitch mode). Which gesture is a
+    // bool rather than the Gesture enum: a hold and its release are one assignment, and
+    // splitting them would let a switch engage one action and release a different one.
+    void   set_action(Switch sw, bool hold, Action a);
+    Action action(Switch sw, bool hold);
     void   update();                        // debounce in Footswitch mode; inert otherwise
     Event  get_event();                     // returns and clears the oldest pending event
     bool   has_event();
