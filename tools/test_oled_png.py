@@ -26,6 +26,11 @@ import oled_png
 failures = []
 
 
+def read(path):
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
 def check(what, got, want):
     if got != want:
         failures.append("%s\n     got: %r\n    want: %r" % (what, got, want))
@@ -83,34 +88,34 @@ try:
 
     # A file that is not there yet is written.
     check("first write reports written", oled_png.write_png(p, W, H, pixels(1), PALETTE), True)
-    first = open(p, "rb").read()
+    first = read(p)
 
     # The same pixels again change nothing -- neither the answer nor the bytes.
     check("same pixels reports skipped", oled_png.write_png(p, W, H, pixels(1), PALETTE), False)
-    check("same pixels leaves the file alone", open(p, "rb").read(), first)
+    check("same pixels leaves the file alone", read(p), first)
 
     # The actual bug: a file holding these pixels compressed by a different zlib build.
     # The bytes differ, the pixels do not, and the file must survive untouched.
     hand_write(p, pixels(1), PALETTE, level=1)
-    other = open(p, "rb").read()
-    check("a differently-compressed file is not byte-equal", other == first, False)
+    other = read(p)
+    check("the differently-compressed file really is different bytes", other != first, True)
     check("different compression, same pixels reports skipped",
           oled_png.write_png(p, W, H, pixels(1), PALETTE), False)
-    check("different compression leaves the file alone", open(p, "rb").read(), other)
+    check("different compression leaves the file alone", read(p), other)
 
     # A consumer stamps pHYs in after the fact. Chunks we do not compare must not
     # provoke a rewrite, or the whole thing churns anyway one step later.
     with_phys(p)
-    stamped = open(p, "rb").read()
+    stamped = read(p)
     check("pHYs-stamped file reports skipped",
           oled_png.write_png(p, W, H, pixels(1), PALETTE), False)
-    check("pHYs-stamped file is left alone", open(p, "rb").read(), stamped)
+    check("pHYs-stamped file is left alone", read(p), stamped)
 
     # One changed pixel is a changed screen.
     changed = pixels(1)
     changed[0] = 2
     check("changed pixel reports written", oled_png.write_png(p, W, H, changed, PALETTE), True)
-    check("changed pixel rewrites", open(p, "rb").read() != stamped, True)
+    check("changed pixel rewrites", read(p) != stamped, True)
 
     # The palette is part of the picture: the same indices in another colour are a
     # different screenshot, and each pedal renders its own panel colour.
@@ -127,13 +132,38 @@ try:
     with open(p, "wb") as fh:
         fh.write(b"\x89PNG\r\n\x1a\nnot really a png")
     check("corrupt file reports written", oled_png.write_png(p, W, H, pixels(1), PALETTE), True)
-    check("corrupt file is replaced",
-          open(p, "rb").read()[:8], b"\x89PNG\r\n\x1a\n")
+    check("corrupt file is replaced", read(p)[:8], b"\x89PNG\r\n\x1a\n")
 
     # A file that is not a PNG at all is likewise replaced, not parsed.
     with open(p, "wb") as fh:
         fh.write(b"")
     check("empty file reports written", oled_png.write_png(p, W, H, pixels(1), PALETTE), True)
+
+    # A write that stopped part-way -- interrupted, or a full disk -- leaves the pixels
+    # readable but the file unterminated. Those pixels must not count as a match, or the
+    # obvious repair (run it again) is the one thing that cannot fix it.
+    oled_png.write_png(p, W, H, pixels(1), PALETTE)
+    whole = read(p)
+    end_of_idat = None
+    i = 8
+    while i + 8 <= len(whole):
+        n = int.from_bytes(whole[i:i + 4], "big")
+        if whole[i + 4:i + 8] == b"IDAT":
+            end_of_idat = i + 8 + n          # before the IDAT CRC, so IEND is gone too
+        i += 12 + n
+    with open(p, "wb") as fh:
+        fh.write(whole[:end_of_idat])
+    check("truncated file reports written",
+          oled_png.write_png(p, W, H, pixels(1), PALETTE), True)
+    check("truncated file is repaired", read(p), whole)
+
+    # Trailing bytes after IEND are the same story from the other end: the picture parses,
+    # but the file is not the one this would write.
+    with open(p, "wb") as fh:
+        fh.write(whole + b"junk")
+    check("trailing garbage reports written",
+          oled_png.write_png(p, W, H, pixels(1), PALETTE), True)
+    check("trailing garbage is removed", read(p), whole)
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 

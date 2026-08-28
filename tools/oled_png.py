@@ -142,21 +142,30 @@ def _holds_already(path: Path, ihdr: bytes, plte: bytes, raw: bytes) -> bool:
 
     found_ihdr = found_plte = None
     idat = bytearray()
+    saw_iend = False
     i = 8
     while i + 8 <= len(data):
         length = int.from_bytes(data[i:i + 4], "big")
         tag = data[i + 4:i + 8]
         body = data[i + 8:i + 8 + length]
         if len(body) != length:
-            return False                      # truncated
+            return False                      # a chunk running past the end
         if tag == b"IHDR":
             found_ihdr = body
         elif tag == b"PLTE":
             found_plte = body
         elif tag == b"IDAT":
             idat += body                      # a writer may split the stream
+        elif tag == b"IEND":
+            saw_iend = True
         i += 12 + length
 
+    # The file has to end where PNG says it ends. A write that stopped part-way leaves the
+    # pixels perfectly readable with the terminator missing, and calling that a match would
+    # make running the generator again -- the obvious repair -- the one thing that cannot
+    # fix it. Trailing bytes after IEND fail the same test from the other side.
+    if not saw_iend or i != len(data):
+        return False
     if found_ihdr != ihdr or found_plte != plte:
         return False
     try:
