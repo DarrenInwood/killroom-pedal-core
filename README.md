@@ -18,6 +18,7 @@ PlatformIO's library dependency finder picks it up from there via
 | `pedal_core/adc_map.hpp` | pure header | 12-bit ADC code → parameter value, raw and calibrated |
 | `pedal_core/encoder_decode.hpp` | pure header | Quadrature decode table, quarter-steps → detents |
 | `pedal_core/usb_midi_cin.hpp` | pure header | USB-MIDI 1.0 CIN classification, both directions |
+| `pedal_core/midi_routing.hpp` | pure header | Where the wire's MIDI routing block and the pedal's MIDI configuration meet — all twelve fields named, and the one place both spellings of the follow-the-receive-channel sentinel are reconciled |
 | `pedal_core/vbus_debounce.hpp` | pure header | VBUS presence debouncer for self-powered devices |
 | `pedal_core/font.hpp` + `font_data.*` | header + data | The family's variable-width OLED fonts; regenerate with [tools/gen_fonts.py](tools/gen_fonts.py) |
 | `pedal_core/eeprom.*` | protocol driver | 25xx, 16-bit address (25LC256 / 25LC512): page-bounded writes at the product's page size, boot health probe, and a RAM-mirror fallback sized by the product — whole-map where it fits, header + system blocks + one record window where it does not |
