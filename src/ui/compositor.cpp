@@ -41,6 +41,18 @@ void Compositor::fit(const display::Font& f, const char* src, uint8_t max_px,
 
 // Copy src into dst, collapsing the literal "+/-" into the single ± glyph and (when
 // strip_spaces) dropping spaces. Capped at maxlen output chars.
+// Copy src into dst, truncated to its capacity, and say whether the stored text moved.
+// The comparison is against the truncated form: two names that differ only past the end of
+// the buffer draw the same pixels, so they are the same screen and cost no redraw.
+bool Compositor::assign(char* dst, uint16_t cap, const char* src)
+{
+    const char* v = (src != nullptr) ? src : "";
+    if (strncmp(dst, v, (size_t)(cap - 1u)) == 0) return false;
+    strncpy(dst, v, (size_t)(cap - 1u));
+    dst[cap - 1u] = '\0';
+    return true;
+}
+
 void Compositor::to_display(char* dst, const char* src, uint8_t maxlen, bool strip_spaces)
 {
     uint8_t j = 0;
@@ -534,24 +546,39 @@ void Compositor::update(uint32_t now)
 // Producers
 // ---------------------------------------------------------------------------
 
+void Compositor::apply(const ScreenState& s)
+{
+    set_screen(s.screen);
+    set_focus(s.focus);
+    set_preset(s.preset);
+    set_preset_name(s.preset_name);
+    set_context_name(s.context_name);
+    for (uint8_t i = 0; i < MAX_COLS; ++i) {
+        set_param(i, s.param_name[i], s.param_val[i], s.param_bar[i]);
+        set_param_pickup(i, s.param_pickup[i]);
+    }
+    set_page(s.page, s.num_pages);
+    set_function_label(s.function);
+    set_switch_labels(s.switch_label[0], s.switch_label[1]);
+    set_name_cursor(s.name_cursor);
+    set_save_prompt(s.save_prompt);
+    set_status(s.status_badge);
+    set_scene(s.scene_badge);
+}
+
 void Compositor::set_context_name(const char* name)
 {
-    strncpy(m_context_name, name, sizeof(m_context_name) - 1);
-    m_context_name[sizeof(m_context_name) - 1] = '\0';
-    m_pacer.changed();
+    if (assign(m_context_name, sizeof(m_context_name), name)) m_pacer.changed();
 }
 
 void Compositor::set_preset(uint16_t slot)
 {
-    m_preset = slot;
-    m_pacer.changed();
+    if (m_preset != slot) { m_preset = slot; m_pacer.changed(); }
 }
 
 void Compositor::set_preset_name(const char* name)
 {
-    strncpy(m_preset_name, name, sizeof(m_preset_name) - 1);
-    m_preset_name[sizeof(m_preset_name) - 1] = '\0';
-    m_pacer.changed();
+    if (assign(m_preset_name, sizeof(m_preset_name), name)) m_pacer.changed();
 }
 
 void Compositor::set_status(bool badge_on)
@@ -573,12 +600,12 @@ void Compositor::set_scene(bool badge_on)
 void Compositor::set_param(uint8_t slot, const char* name, const char* value_str, uint16_t bar)
 {
     if (slot >= MAX_COLS) return;
-    strncpy(m_param_name[slot], name,      sizeof(m_param_name[slot]) - 1);
-    m_param_name[slot][sizeof(m_param_name[slot]) - 1] = '\0';
-    strncpy(m_param_val[slot],  value_str, sizeof(m_param_val[slot])  - 1);
-    m_param_val[slot][sizeof(m_param_val[slot]) - 1] = '\0';
-    m_param_bar[slot] = bar;
-    m_pacer.changed();
+    // A knob pushes its column every tick while it is being turned, so the redraw is
+    // worth spending only when the label, the reading or the gauge actually moves.
+    bool moved = assign(m_param_name[slot], sizeof(m_param_name[slot]), name);
+    if (assign(m_param_val[slot], sizeof(m_param_val[slot]), value_str)) moved = true;
+    if (m_param_bar[slot] != bar) { m_param_bar[slot] = bar; moved = true; }
+    if (moved) m_pacer.changed();
 }
 
 void Compositor::set_param_pickup(uint8_t slot, uint16_t pot)
@@ -591,29 +618,22 @@ void Compositor::set_param_pickup(uint8_t slot, uint16_t pot)
 
 void Compositor::set_switch_labels(const char* fs1, const char* fs2)
 {
-    const char* v[2] = { fs1 ? fs1 : "", fs2 ? fs2 : "" };
-    bool changed = false;
-    for (uint8_t i = 0; i < 2u; ++i) {
-        if (strncmp(m_switch_label[i], v[i], sizeof(m_switch_label[i]) - 1) == 0) continue;
-        strncpy(m_switch_label[i], v[i], sizeof(m_switch_label[i]) - 1);
-        m_switch_label[i][sizeof(m_switch_label[i]) - 1] = '\0';
-        changed = true;
-    }
+    const char* v[2] = { fs1, fs2 };
+    bool moved = false;
+    for (uint8_t i = 0; i < 2u; ++i)
+        if (assign(m_switch_label[i], sizeof(m_switch_label[i]), v[i])) moved = true;
     // Pushed every tick, so the redraw is worth spending only when the words move.
-    if (changed) m_pacer.changed();
+    if (moved) m_pacer.changed();
 }
 
 void Compositor::set_function_label(const char* label)
 {
-    const char* v = label ? label : "";
-    if (strncmp(m_function, v, sizeof(m_function) - 1) == 0) return;
-    strncpy(m_function, v, sizeof(m_function) - 1);
-    m_function[sizeof(m_function) - 1] = '\0';
-    m_pacer.changed();
+    if (assign(m_function, sizeof(m_function), label)) m_pacer.changed();
 }
 
 void Compositor::set_page(uint8_t page, uint8_t num_pages)
 {
+    if (m_page == page && m_num_pages == num_pages) return;
     m_page      = page;
     m_num_pages = num_pages;
     m_pacer.changed();
