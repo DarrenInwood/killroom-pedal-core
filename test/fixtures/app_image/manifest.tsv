@@ -1,0 +1,31 @@
+# The image-descriptor fixtures, and the verdict each one should earn.
+#
+# One row per fixture, tab-separated:
+#
+#   file  region_bytes  cpp  python  note
+#
+# `cpp` is what app_image::validate() should answer; `python` is whether
+# tools/app_image.py's check() should come back with no problems. Both are stated
+# rather than derived, so a change in either implementation shows up here as a
+# disagreement with what was intended rather than as two implementations quietly
+# agreeing on something new.
+#
+# `n-a` means the case is not one that side can be asked. It is not a way to
+# excuse a failure: every n-a carries a reason in its note.
+#
+# Tab-separated rather than JSON so both a Python test and a C++ one can read it in
+# a few lines. A hand-rolled JSON parser in the suite would be more code to get
+# wrong than the thing under test.
+#
+# Regenerate the images with: python test/fixtures/app_image/make_fixtures.py
+#
+file	region_bytes	cpp	python	note
+valid.bin	24576	valid	valid	a sealed image, descriptor patched and trailer correct
+bad_magic.bin	24576	invalid	invalid	no descriptor at 0x200: app_image.cpp unlinked or the vector table grew over it
+size_zero.bin	24576	invalid	invalid	the size field was never patched, so the sealing post-build step did not run
+unaligned.bin	24576	invalid	invalid	size is not word-aligned, and the build pads to 4 bytes before the trailer
+too_short.bin	24576	invalid	invalid	size is smaller than a descriptor plus a trailer
+oversize.bin	768	invalid	invalid	size exceeds the app region this product reserves
+bad_crc.bin	24576	invalid	invalid	sealed, then the trailer corrupted: what an aborted flash leaves behind
+trailing_bytes.bin	24576	valid	invalid	the declared size is honest and its CRC is right, but the file runs on past it. validate() judges a region of flash and reads only `size` bytes, so it is satisfied; check() judges a file and refuses a size that disagrees with the length on disk. A real difference in what the two are asked, not a divergence.
+stub.bin	24576	n-a	invalid	too small to hold a descriptor. validate() reads at HEADER_OFFSET before it knows any size, so a buffer shorter than that is a precondition it does not accept rather than a verdict it returns; the bootloader can never present one, because its region is always larger.

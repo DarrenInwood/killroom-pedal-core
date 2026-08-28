@@ -6,10 +6,10 @@ on:
   pull_request:
 
 jobs:
-  # The host-side tools have no unit tests of their own -- they are proved by the
-  # consumers' golden diffs, which cannot run here (some need pcbnew, none of them
-  # ship a board). Compiling them is the one guard this repo can offer against a
-  # library whose Python is broken for every consumer at once.
+  # Most host-side tools are proved by the consumers' golden diffs, which cannot run
+  # here (some need pcbnew, none of them ship a board). Compiling them is the guard
+  # against a library whose Python is broken for every consumer at once. The three
+  # that can be tested here are tested here.
   tools-compile:
     runs-on: ubuntu-latest
     steps:
@@ -27,6 +27,12 @@ jobs:
       # share, so a change to it is a change to all of them.
       - name: The netlist parser reads a fixture correctly
         run: python tools/kicad/test_netlist.py
+
+      # The release gate re-implements app_image::validate(), so the descriptor's layout
+      # is asserted in both C++ and Python. Both walk one set of fixtures, and a
+      # divergence between them fails here rather than leaving a pedal in DFU.
+      - name: The release gate agrees with the bootloader
+        run: python tools/test_app_image.py
 
       # A screenshot's compressed bytes depend on the zlib build that wrote them, so a
       # regenerated-but-unchanged screen is a different file holding the same picture.
