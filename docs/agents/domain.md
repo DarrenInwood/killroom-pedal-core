@@ -28,8 +28,8 @@ This repo is **single-context**:
 └── test/                              ← host-native suites, one per module
 ```
 
-Neither the glossary nor any ADR exists yet, which is the expected state: both are written the
-day a term or a decision actually resolves.
+Both are written the day a term or a decision actually resolves, so each grows an entry at a
+time rather than being drafted up front.
 
 ## Borrow the multi-effect's vocabulary before inventing one
 

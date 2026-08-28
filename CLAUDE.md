@@ -65,6 +65,6 @@ The five canonical roles, each label string equal to its name: `needs-triage`, `
 
 ### Domain docs
 
-Single-context: one `CONTEXT.md` glossary and `docs/adr/` at the root, both written lazily as
-terms and decisions resolve, and neither existing yet. Terms the products already settled are
+Single-context: the [CONTEXT.md](CONTEXT.md) glossary and [docs/adr/](docs/adr/) at the root,
+both written lazily as terms and decisions resolve. Terms the products already settled are
 borrowed rather than reinvented. See [docs/agents/domain.md](docs/agents/domain.md).
