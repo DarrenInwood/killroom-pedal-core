@@ -3,7 +3,7 @@
 
 // The algorithm surface the shared UI layer reads. A product's algorithm base
 // (a DSP effect with routing and clocks, a stateless algorithm over a parameter
-// vector — whatever it is) implements these nine and the shared code needs
+// vector — whatever it is) implements these ten and the shared code needs
 // nothing else from it.
 //
 // There is deliberately no set_param here. Every parameter write funnels
@@ -13,7 +13,7 @@
 // param_display; reset() is the one mutation, "restore the declared
 // defaults", whose meaning every product already defines.
 //
-// The tempo trio is for products with a tempo layer; the defaults mean "no
+// The tempo group is for products with a tempo layer; the defaults mean "no
 // tempo behaviour" and a product without one leaves them alone.
 namespace pedal_core {
 
@@ -31,6 +31,14 @@ public:
     virtual int8_t tempo_param() const { return -1; }   // -1 = no tempo parameter
     virtual void   set_tempo(float) {}
     virtual float  tempo_bpm() const { return 0.0f; }
+
+    // The rate the tempo LED locks to, in whole milliseconds, or 0 where the
+    // algorithm has no beat to show. This is the algorithm's primary musical
+    // rate rather than the tempo itself: a tremolo running in 3/8 flashes at
+    // 3/8 of a beat, which is the thing a player watching the LED reads. 0 is
+    // the same statement tempo_bpm() makes by answering 0 — no beat, rather
+    // than a beat of zero.
+    virtual uint32_t beat_period_ms() const { return 0u; }
 
 protected:
     ~IAlgorithm() = default;   // never deleted through the interface
