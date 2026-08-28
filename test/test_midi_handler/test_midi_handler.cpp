@@ -101,26 +101,13 @@ void setUp(void) {
     g_clock = g_clock_reset = 0;
     g_order.clear();
     g_pc_arrivals.clear();
-    // Reset the file-static parser state (visible here because we #include the .cpp)
-    // so running status / SysEx accumulation never leaks across tests.
-    s_uart_parser = Parser{};
-    s_usb_parser  = Parser{};
-    // The DIN router's lock and queue are file-static too, and a test that leaves a
-    // SysEx half-forwarded would otherwise hand the lock to the next one.
     usb_midi::g_tx.clear();
     usb_midi::g_tx_sysex.clear();
-    s_din_locked  = false;
-    s_din_queued  = 0;
-    s_din_fed_ms  = 0;
-    // The status byte the jack is on outlives any one message by design -- that is
-    // what running status is -- so a test that leaves the wire mid-run would hand the
-    // next one a jack that omits status bytes it is expecting to see.
-    s_din_running = 0;
-    s_generating_clock = false;
     systick::fake_set_ms(0u);
-    s_sysex_always     = nullptr;
-    s_sysex_always_len = 0;
-    midi_handler::set_config(midi_handler::Config{});   // every default is today's behaviour
+
+    // One call. init() brings the parsers, the router, the settings and the clock flag to
+    // a known state, which is the whole of what a case needs resetting -- so this suite
+    // knows the module by its interface rather than by the names of its statics.
     midi_handler::init(0, false);   // channel 0, omni off
 }
 void tearDown(void) {}
