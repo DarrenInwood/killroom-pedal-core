@@ -152,6 +152,11 @@ reference for what it must define.
 pio test -e native
 ```
 
+`bash tools/install_hooks.sh`, once per clone, points git at [.githooks/](.githooks/): its
+`pre-push` runs that suite, every `tools/**/test_*.py` and the doc-link check before a push
+leaves the machine. The board tools need `pcbnew`, which lives in a KiCad install rather than
+on a CI runner, so those tests run here and are skipped with a message where KiCad is absent.
+
 Unit tests for library modules live here, not in the consumers. The two
 protocol drivers are tested by compiling the real `.cpp` into the test TU
 behind recording stubs — see `test/test_eeprom` for the pattern.
