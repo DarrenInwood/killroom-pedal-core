@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "../action.hpp"
 #include "../display.hpp"
 #include "pedal_core_config.hpp"   // OLED_*
 
@@ -19,6 +20,8 @@
 // Public mutators are virtual so a suite can drive real machinery behind a
 // recording subclass.
 namespace pedal_core::ui {
+
+namespace action = pedal_core::action;
 
 class Compositor {
 public:
@@ -67,11 +70,11 @@ public:
     // the context row. Empty gives the row back to the page indicator — the two share the
     // space because they are never both worth saying: a page number means nothing where the
     // knobs are not walking pages, and the switch's job is the thing a foot needs to know.
-    // Longest label the row will hold, in characters. Sized for the longest name in the
-    // family's action vocabulary ("Algorithm Down", 14) with a character to spare — a
-    // label past this is truncated silently, which reads as a misspelling rather than as
-    // a layout problem. test_external_input holds the vocabulary to it.
-    static constexpr uint8_t FUNCTION_LABEL_MAX = 15u;
+    // Longest label the row will hold, in characters: the longest name in the family's
+    // action vocabulary with a character to spare. Derived rather than written down, so
+    // an action whose name outgrows the row widens the row instead of being truncated
+    // silently — truncation reads as a misspelling rather than as a layout problem.
+    static constexpr uint8_t FUNCTION_LABEL_MAX = (uint8_t)(action::LONGEST_NAME + 1u);
     virtual void set_function_label(const char* label);
     // What the two footswitches do right now, along the bottom edge: the first at the
     // left and the second at the right, each over the switch it names. A product that
