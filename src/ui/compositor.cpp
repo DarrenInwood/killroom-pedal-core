@@ -332,7 +332,7 @@ void Compositor::draw_name_page()
     display::draw_text(display::FONT_SMALL, 0, HINT_Y, "P1=move  P2=char");
 }
 
-void Compositor::draw_normal()
+void Compositor::draw_normal(bool transient_owns_bottom_row)
 {
     display::clear();
     if (m_screen != SCREEN_NORMAL) {
@@ -344,9 +344,9 @@ void Compositor::draw_normal()
     draw_param_grid();
     // What the two footswitches do, along the bottom edge: the first at the left and the
     // second at the right, so each label sits over the switch it names. Suppressed while a
-    // transient banner or card owns this row (m_overlay != None); it returns once that
-    // clears. The two longest names in the action vocabulary still fit side by side.
-    if (m_overlay == Overlay::None) {
+    // transient banner or card owns this row; it returns once that clears. The two longest
+    // names in the action vocabulary still fit side by side.
+    if (!transient_owns_bottom_row) {
         if (m_switch_label[0][0])
             display::draw_text(display::FONT_SMALL, 0, HINT_Y, m_switch_label[0]);
         if (m_switch_label[1][0])
@@ -454,41 +454,6 @@ void Compositor::draw_save(uint32_t elapsed)
     }
 }
 
-// Enter/exit progress (0..256) for the timed Card/Banner overlays.
-uint16_t Compositor::overlay_prog(uint32_t elapsed) const
-{
-    if (elapsed < ANIM_MS) return (uint16_t)(elapsed * 256u / ANIM_MS);
-    if (elapsed < DISPLAY_PARAM_SHOW_MS - ANIM_MS) return 256u;
-    if (elapsed < DISPLAY_PARAM_SHOW_MS)
-        return (uint16_t)((DISPLAY_PARAM_SHOW_MS - elapsed) * 256u / ANIM_MS);
-    return 0u;
-}
-
-uint32_t Compositor::overlay_total() const
-{
-    return (m_overlay == Overlay::Save) ? SAVE_TOTAL_MS : DISPLAY_PARAM_SHOW_MS;
-}
-
-// Whether the overlay is mid-animation this tick (drives the faster redraw cadence).
-bool Compositor::overlay_animating(uint32_t elapsed) const
-{
-    if (m_overlay == Overlay::Save) return true;
-    return elapsed < ANIM_MS || elapsed >= DISPLAY_PARAM_SHOW_MS - ANIM_MS;
-}
-
-// Compose the frame for this tick: the save animation owns the whole screen; the focus
-// panel and the banner are drawn over the normal screen (or over whichever product screen
-// draw_normal() dispatched to), so what they do not cover stays on view.
-void Compositor::draw_frame(uint32_t now)
-{
-    m_icon_now = now;  // drives the header icon animation
-    const uint32_t elapsed = (m_overlay != Overlay::None) ? (now - m_overlay_start_ms) : 0u;
-    if (m_overlay == Overlay::Save) { draw_save(elapsed); return; }
-    draw_normal();
-    if      (m_overlay == Overlay::Panel)   draw_focus_panel(overlay_prog(elapsed));
-    else if (m_overlay == Overlay::Banner) draw_banner(overlay_prog(elapsed));
-}
-
 // ---------------------------------------------------------------------------
 // Lifecycle and pacing
 // ---------------------------------------------------------------------------
@@ -502,87 +467,66 @@ void Compositor::init()
         snprintf(m_param_val[i],  sizeof(m_param_val[i]),  "--");
         m_param_bar[i] = NO_BAR;
     }
-    m_overlay = Overlay::None;
-    m_slide_pending = false;
-    m_slide_active  = false;
+    m_pacer = FramePacer{};
     display::init();
-    m_dirty = true;
 }
 
 void Compositor::update(uint32_t now)
 {
-    if (m_splash_expiry_ms != 0) {
-        if (now < m_splash_expiry_ms) {
-            // Animate the splash at the overlay cadence; a static hold just waits.
-            if (m_splash_active && (now - m_last_draw_ms) >= ANIM_FRAME_MS
-                    && !display::update_busy()) {
-                m_last_draw_ms = now;
-                display::clear();
-                draw_splash_art(now - m_splash_start_ms);
-                display::update_async();
-            }
+    const FramePacer::Decision d = m_pacer.decide(now, display::update_busy());
+
+    // A slide needs the screen it is going to before it can composite towards it: render
+    // the destination into the framebuffer and keep a copy.
+    if (d.capture_slide_target) {
+        m_icon_now = now;
+        draw_normal();
+        display::capture(m_slide_to);
+    }
+
+    switch (d.what) {
+        case FramePacer::What::Nothing:
             return;
-        }
-        m_splash_expiry_ms = 0;
-        m_splash_active    = false;
-        if (m_splash_after_hold) {
-            // The storage-fault hold just ended: show the normal splash next, so a faulted
-            // boot still runs Storage Fault → Splash → UI rather than jumping straight to it.
-            m_splash_after_hold = false;
+
+        case FramePacer::What::SplashFrame:
+            display::clear();
+            draw_splash_art(d.arg);
+            break;
+
+        case FramePacer::What::SplashRestart:
+            // The storage-fault hold just ended, so the normal splash follows it: a
+            // faulted boot runs Storage Fault -> Splash -> UI rather than jumping
+            // straight to the UI. show_splash() puts its first frame up itself.
             show_splash();
             return;
-        }
-        m_dirty = true;
-    }
 
-    // Slide transition: render the destination once, then composite it sliding over the
-    // captured "from" frame. Takes precedence over overlays and the normal redraw.
-    if (m_slide_pending) {
-        m_icon_now = now;
-        draw_normal();                    // render the destination into the framebuffer
-        display::capture(m_slide_to);     // and save it
-        m_slide_pending  = false;
-        m_slide_active   = true;
-        m_slide_start_ms = now;
-    }
-    if (m_slide_active) {
-        const uint32_t elapsed = now - m_slide_start_ms;
-        if (elapsed < SLIDE_MS && (now - m_last_draw_ms) < ANIM_FRAME_MS) return;
-        if (display::update_busy()) return;
-        m_last_draw_ms = now;
-        if (elapsed >= SLIDE_MS) {
-            display::draw_framebuffer(m_slide_to);   // settle on the destination
-            m_slide_active = false;
-            m_dirty = true;
-        } else {
+        case FramePacer::What::SlideStep:
             display::compose_hslide(m_slide_from, m_slide_to,
-                                    (uint8_t)(elapsed * OLED_WIDTH / SLIDE_MS), m_slide_dir);
-        }
-        display::update_async();
-        return;
+                                    (uint8_t)(d.arg * OLED_WIDTH / FramePacer::SLIDE_MS),
+                                    m_slide_dir);
+            break;
+
+        case FramePacer::What::SlideSettle:
+            display::draw_framebuffer(m_slide_to);   // settle on the destination
+            break;
+
+        // The save animation owns the whole screen; the focus panel and the banner are
+        // drawn over the normal screen (or over whichever product screen draw_normal()
+        // dispatched to), so what they do not cover stays on view.
+        case FramePacer::What::FrameSave:
+            m_icon_now = now;
+            draw_save(d.arg);
+            break;
+
+        case FramePacer::What::Frame:
+        case FramePacer::What::FramePanel:
+        case FramePacer::What::FrameBanner:
+            m_icon_now = now;   // drives the header icon animation
+            draw_normal(d.what != FramePacer::What::Frame);
+            if      (d.what == FramePacer::What::FramePanel)  draw_focus_panel((uint16_t)d.arg);
+            else if (d.what == FramePacer::What::FrameBanner) draw_banner((uint16_t)d.arg);
+            break;
     }
 
-    bool animating = false;
-    if (m_overlay != Overlay::None) {
-        const uint32_t elapsed = now - m_overlay_start_ms;
-        if (elapsed >= overlay_total()) {
-            m_overlay = Overlay::None;
-            m_dirty = true;
-        } else {
-            animating = overlay_animating(elapsed);
-        }
-    }
-
-    // Redraw on state change, or every animation frame while an overlay animates;
-    // otherwise idle at the 20 fps cap. Input is polled elsewhere, so a redraw never
-    // delays a knob or footswitch.
-    const uint32_t cap = animating ? ANIM_FRAME_MS : REFRESH_MS;
-    if (!m_dirty && (now - m_last_draw_ms) < cap) return;
-    if (display::update_busy()) return;
-
-    m_dirty = false;
-    m_last_draw_ms = now;
-    draw_frame(now);
     display::update_async();
 }
 
@@ -594,27 +538,27 @@ void Compositor::set_context_name(const char* name)
 {
     strncpy(m_context_name, name, sizeof(m_context_name) - 1);
     m_context_name[sizeof(m_context_name) - 1] = '\0';
-    m_dirty = true;
+    m_pacer.changed();
 }
 
 void Compositor::set_preset(uint16_t slot)
 {
     m_preset = slot;
-    m_dirty  = true;
+    m_pacer.changed();
 }
 
 void Compositor::set_preset_name(const char* name)
 {
     strncpy(m_preset_name, name, sizeof(m_preset_name) - 1);
     m_preset_name[sizeof(m_preset_name) - 1] = '\0';
-    m_dirty = true;
+    m_pacer.changed();
 }
 
 void Compositor::set_status(bool badge_on)
 {
     if (m_status_badge != badge_on) {
         m_status_badge = badge_on;
-        m_dirty        = true;
+        m_pacer.changed();
     }
 }
 
@@ -622,7 +566,7 @@ void Compositor::set_scene(bool badge_on)
 {
     if (m_scene_badge != badge_on) {
         m_scene_badge = badge_on;
-        m_dirty       = true;
+        m_pacer.changed();
     }
 }
 
@@ -634,7 +578,7 @@ void Compositor::set_param(uint8_t slot, const char* name, const char* value_str
     strncpy(m_param_val[slot],  value_str, sizeof(m_param_val[slot])  - 1);
     m_param_val[slot][sizeof(m_param_val[slot]) - 1] = '\0';
     m_param_bar[slot] = bar;
-    m_dirty = true;
+    m_pacer.changed();
 }
 
 void Compositor::set_param_pickup(uint8_t slot, uint16_t pot)
@@ -642,7 +586,7 @@ void Compositor::set_param_pickup(uint8_t slot, uint16_t pot)
     if (slot >= MAX_COLS) return;
     if (m_param_pickup[slot] == pot) return;   // held every tick while armed; redraw once
     m_param_pickup[slot] = pot;
-    m_dirty = true;
+    m_pacer.changed();
 }
 
 void Compositor::set_switch_labels(const char* fs1, const char* fs2)
@@ -656,7 +600,7 @@ void Compositor::set_switch_labels(const char* fs1, const char* fs2)
         changed = true;
     }
     // Pushed every tick, so the redraw is worth spending only when the words move.
-    if (changed) m_dirty = true;
+    if (changed) m_pacer.changed();
 }
 
 void Compositor::set_function_label(const char* label)
@@ -665,44 +609,42 @@ void Compositor::set_function_label(const char* label)
     if (strncmp(m_function, v, sizeof(m_function) - 1) == 0) return;
     strncpy(m_function, v, sizeof(m_function) - 1);
     m_function[sizeof(m_function) - 1] = '\0';
-    m_dirty = true;
+    m_pacer.changed();
 }
 
 void Compositor::set_page(uint8_t page, uint8_t num_pages)
 {
     m_page      = page;
     m_num_pages = num_pages;
-    m_dirty     = true;
+    m_pacer.changed();
 }
 
 void Compositor::set_focus(Focus f)
 {
-    if (m_focus != f) { m_focus = f; m_dirty = true; }
+    if (m_focus != f) { m_focus = f; m_pacer.changed(); }
 }
 
 void Compositor::set_save_prompt(bool show)
 {
-    if (m_save_prompt != show) { m_save_prompt = show; m_dirty = true; }
+    if (m_save_prompt != show) { m_save_prompt = show; m_pacer.changed(); }
 }
 
 void Compositor::set_screen(uint8_t screen_id)
 {
-    if (m_screen != screen_id) { m_screen = screen_id; m_dirty = true; }
+    if (m_screen != screen_id) { m_screen = screen_id; m_pacer.changed(); }
 }
 
 void Compositor::set_name_cursor(uint8_t cursor)
 {
-    if (m_name_cursor != cursor) { m_name_cursor = cursor; m_dirty = true; }
+    if (m_name_cursor != cursor) { m_name_cursor = cursor; m_pacer.changed(); }
 }
 
 void Compositor::show_message(const char* msg, MsgPos pos)
 {
     strncpy(m_banner, msg, sizeof(m_banner) - 1);
     m_banner[sizeof(m_banner) - 1] = '\0';
-    m_banner_bottom    = (pos == MsgPos::Bottom);
-    m_overlay          = Overlay::Banner;
-    m_overlay_start_ms = systick::now_ms();
-    m_dirty            = true;
+    m_banner_bottom = (pos == MsgPos::Bottom);
+    m_pacer.overlay(FramePacer::Overlay::Banner, systick::now_ms());
 }
 
 void Compositor::show_param_change(const char* name, const char* value, uint16_t bar)
@@ -711,56 +653,37 @@ void Compositor::show_param_change(const char* name, const char* value, uint16_t
     m_panel_name[sizeof(m_panel_name) - 1] = '\0';
     strncpy(m_panel_val, value, sizeof(m_panel_val) - 1);
     m_panel_val[sizeof(m_panel_val) - 1] = '\0';
-    m_panel_bar         = bar;
-
-    // The panel unrolls only when it first appears. If it is already showing (a stream of
-    // knob updates), start the clock ANIM_MS in so `elapsed` lands past the open ramp — the
-    // value and the dismiss timer refresh, but the unroll doesn't replay. The roll-up still
-    // plays once updates stop and `elapsed` reaches the tail of DISPLAY_PARAM_SHOW_MS.
-    const bool already_open = (m_overlay == Overlay::Panel);
-    m_overlay          = Overlay::Panel;
-    m_overlay_start_ms = already_open ? (systick::now_ms() - ANIM_MS) : systick::now_ms();
-    m_dirty            = true;
+    m_panel_bar = bar;
+    m_pacer.overlay(FramePacer::Overlay::Panel, systick::now_ms());
 }
 
 void Compositor::show_saved()
 {
-    m_overlay          = Overlay::Save;
-    m_overlay_start_ms = systick::now_ms();
-    m_dirty            = true;
+    m_pacer.overlay(FramePacer::Overlay::Save, systick::now_ms());
 }
 
 void Compositor::begin_slide(int8_t dir)
 {
-    // Skip while a splash or another slide is in flight; capture the current frame as the
-    // "from" and let the next update() render and slide in the "to".
-    if (m_splash_expiry_ms != 0 || m_slide_active || m_slide_pending) return;
-    // If a transient overlay (the param focus panel / a banner) is open, close it now and
-    // re-render the underlying screen so the slide captures that, not the overlay. Otherwise
-    // the panel would animate as part of the slide and then pop back on top of the new screen
-    // (m_overlay is still timed out). The state behind it is still current here — begin_slide
-    // runs before the algorithm/preset/page actually changes — so this captures the correct
-    // "from" frame and the user sees a clean slide to the new screen.
-    if (m_overlay != Overlay::None) {
-        m_overlay = Overlay::None;
-        draw_normal();
-    }
+    // A splash or another slide in flight keeps the screen; otherwise capture the current
+    // frame as the "from" and let the next update() render and slide in the "to".
+    const FramePacer::SlideStart start = m_pacer.slide();
+    if (start == FramePacer::SlideStart::Refused) return;
+    // A transient overlay (the param focus panel / a banner) has been closed, so re-render
+    // the underlying screen for the slide to capture. The state behind it is still current
+    // here — begin_slide runs before the algorithm/preset/page actually changes — so this
+    // captures the correct "from" frame and the player sees a clean slide to the new screen.
+    if (start == FramePacer::SlideStart::RedrawFirst) draw_normal();
     display::capture(m_slide_from);
-    m_slide_dir     = dir;
-    m_slide_pending = true;
-    m_dirty         = true;
+    m_slide_dir = dir;
 }
 
 void Compositor::show_splash()
 {
-    m_splash_start_ms  = systick::now_ms();
-    m_splash_expiry_ms = m_splash_start_ms + SPLASH_MS;
-    m_splash_active    = true;
+    const uint32_t now = systick::now_ms();
     display::clear();
     draw_splash_art(0);       // first frame up immediately; the superloop animates the rest
     display::update();
-    m_last_draw_ms = m_splash_start_ms;
-    m_dirty = false;
+    m_pacer.splash(now);
 }
 
 // Drawn with the 6x8 page font (like a bootloader's DFU screen), not the proportional
@@ -778,14 +701,11 @@ void Compositor::draw_storage_fault_screen()
 
 void Compositor::show_storage_fault()
 {
-    // Held via the splash-expiry field so the superloop reveals the normal screen (via the
-    // splash) after it clears.
+    // A static hold on the same timer the splash uses, with the splash queued behind it,
+    // so the superloop reveals the normal screen only after both have had their turn.
     draw_storage_fault_screen();
     display::update();
-    m_splash_expiry_ms  = systick::now_ms() + FAULT_HOLD_MS;
-    m_splash_active     = false;  // a static hold, not the animated splash — leave the message up
-    m_splash_after_hold = true;   // after the fault warning, run the splash before the UI
-    m_dirty = false;
+    m_pacer.fault_hold(systick::now_ms());
 }
 
 }  // namespace pedal_core::ui

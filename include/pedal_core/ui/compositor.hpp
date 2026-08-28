@@ -2,6 +2,7 @@
 #include <cstdint>
 #include "../action.hpp"
 #include "../display.hpp"
+#include "frame_pacer.hpp"
 #include "pedal_core_config.hpp"   // OLED_*
 
 // The family compositor: one full-frame redraw of the performance screen from
@@ -141,7 +142,7 @@ protected:
 
     // Mark the frame dirty after a change to device-side state the base
     // cannot see (a product screen's own readouts).
-    void mark_dirty() { m_dirty = true; }
+    void mark_dirty() { m_pacer.changed(); }
 
     // Layout rows shared by the performance grid and the product screens.
     static constexpr uint8_t RULE_Y  = 17u;
@@ -196,54 +197,37 @@ protected:
     bool       m_scene_badge  = false;
 
 private:
-    void draw_normal();
+    void draw_normal(bool transient_owns_bottom_row = false);
     void draw_header(uint32_t now);
     void draw_context_line();
     void draw_param_grid();
     void draw_focus_panel(uint16_t prog);
     void draw_banner(uint16_t prog);
     void draw_save(uint32_t elapsed);
-    void draw_frame(uint32_t now);
     void draw_title_page_chip();
-    uint16_t overlay_prog(uint32_t elapsed) const;
-    uint32_t overlay_total() const;
-    bool overlay_animating(uint32_t elapsed) const;
     static void draw_check(uint8_t x, uint8_t y);
 
-    // Pacing.
-    static constexpr uint32_t REFRESH_MS     = 50u;
-    static constexpr uint32_t ANIM_FRAME_MS  = 16u;
-    static constexpr uint32_t ANIM_MS        = 140u;
-    static constexpr uint32_t SAVE_SAVING_MS = 500u;
-    static constexpr uint32_t SAVE_TOTAL_MS  = 1200u;
-    static constexpr uint32_t SLIDE_MS       = 150u;
-    static constexpr uint32_t SPLASH_MS      = 2000u;
-    static constexpr uint32_t FAULT_HOLD_MS  = 2500u;
+    // When a frame is due and what belongs on it. Every timing constant except the one
+    // below is the pacer's; this class paints what it is told to.
+    FramePacer m_pacer;
 
-    enum class Overlay : uint8_t { None, Panel, Banner, Save };
-    Overlay  m_overlay = Overlay::None;
-    uint32_t m_overlay_start_ms = 0;
+    // How long the save animation spends on SAVING before it becomes SAVED. A drawing
+    // threshold within the frame, not a decision about when to draw one.
+    static constexpr uint32_t SAVE_SAVING_MS = 500u;
+
+    // What the transients say, held for the frame that draws them.
     char     m_panel_name[16] = {};
     char     m_panel_val [16] = {};
     uint16_t m_panel_bar = NO_BAR;
     char     m_banner[32] = {};
     bool     m_banner_bottom = false;
 
-    bool     m_slide_pending = false;
-    bool     m_slide_active  = false;
-    int8_t   m_slide_dir     = 1;
-    uint32_t m_slide_start_ms = 0;
+    // The two frames a transition composites, and which way it runs.
+    int8_t   m_slide_dir = 1;
     uint8_t  m_slide_from[OLED_PAGES][OLED_WIDTH];
     uint8_t  m_slide_to  [OLED_PAGES][OLED_WIDTH];
 
-    bool     m_dirty = true;
-    uint32_t m_last_draw_ms = 0;
     uint32_t m_icon_now = 0;
-
-    uint32_t m_splash_expiry_ms = 0;
-    uint32_t m_splash_start_ms  = 0;
-    bool     m_splash_active    = false;
-    bool     m_splash_after_hold = false;
 };
 
 }  // namespace pedal_core::ui
