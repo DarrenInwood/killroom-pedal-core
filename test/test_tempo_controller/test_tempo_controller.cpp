@@ -12,6 +12,8 @@
 
 #include <pedal_core/tempo_controller.hpp>
 #include <pedal_core/tap_tempo.hpp>
+#include <pedal_core/tempo_led.hpp>
+#include <pedal_core/midi_clock_out.hpp>
 #include "pedal_core_tempo_config.hpp"
 
 namespace systick {
@@ -19,13 +21,31 @@ namespace systick {
     void fake_advance_ms(uint32_t ms);
 }
 
+// tick() drives the tempo LED and the clock generator, so the suite watches both: the LED
+// through the shared hal panel fake (tempo_led.cpp itself is real, in the src filter), and
+// the generator through the shared midi_clock_out fake.
+namespace pedal_core::hal {
+    void fake_panel_reset();
+    bool fake_led(uint8_t idx);
+}
+namespace midi_clock_out {
+    void     fake_clock_reset();
+    bool     fake_clock_running();
+    float    fake_clock_bpm();
+    uint32_t fake_clock_last_poll_ms();
+    unsigned fake_clock_polls();
+}
+
 
 // A tempo-synced fake algorithm: records the last set_tempo() and reports a
 // settable tempo_bpm(); tempo_param() is 0 (i.e. it has a synced parameter).
 class FakeAlgorithm : public pedal_core::IAlgorithm {
 public:
-    float  m_last_set_tempo = -1.0f;
-    float  m_tempo_bpm_val  = 120.0f;
+    virtual ~FakeAlgorithm() = default;   // the suite deletes these; IAlgorithm never is
+
+    float    m_last_set_tempo = -1.0f;
+    float    m_tempo_bpm_val  = 120.0f;
+    uint32_t m_beat_period_ms = 0u;       // 0 = no beat, the interface default
 
     const char* name()       const override { return "Fake"; }
     uint8_t     num_params() const override { return 4; }
@@ -40,6 +60,7 @@ public:
     int8_t   tempo_param() const override { return 0; }
     float    tempo_bpm()   const override { return m_tempo_bpm_val; }
     void     set_tempo(float bpm) override { m_last_set_tempo = bpm; }
+    uint32_t beat_period_ms() const override { return m_beat_period_ms; }
 };
 
 // An algorithm with no tempo-synced parameter — a reverb, a pitch shifter. IAlgorithm's
@@ -64,10 +85,14 @@ static void track_clock_beat(uint32_t spacing_ms) {
 }
 
 void setUp(void) {
-        systick::fake_set_ms(1000);
+    systick::fake_set_ms(1000);
     tap_tempo::init();
+    tempo_led::init();
+    pedal_core::hal::fake_panel_reset();
+    midi_clock_out::fake_clock_reset();
     g_tc = new TempoController();
     g_a  = new FakeAlgorithm();
+    g_tc->init();
 }
 void tearDown(void) { delete g_tc; delete g_a; g_tc = nullptr; g_a = nullptr; }
 
@@ -323,6 +348,187 @@ void test_algo_change_leaves_midi_armed(void) {
     g_tc->on_algo_change(incoming);
     TEST_ASSERT_TRUE(g_tc->midi_armed());
 }
+
+// ---------------------------------------------------------------------------
+// The bound form, and the algorithm the events carry
+// ---------------------------------------------------------------------------
+
+// The two ways in are one state machine: bound or passed, the same event does the same
+// thing.
+void test_the_bound_form_and_the_passed_form_agree(void) {
+    g_a->m_tempo_bpm_val = 137.0f;
+    g_tc->on_param_edit(*g_a);
+
+    TempoController bound;
+    bound.init();
+    bound.bind(*g_a);
+    bound.on_param_edit();
+
+    TEST_ASSERT_EQUAL_FLOAT(g_tc->display_bpm(), bound.display_bpm());
+    TEST_ASSERT_EQUAL_INT((int)g_tc->tempo_source(), (int)bound.tempo_source());
+    TEST_ASSERT_EQUAL_INT(g_tc->midi_armed(), bound.midi_armed());
+}
+
+// Every event that is handed an algorithm binds it, so a caller can move to the shorter
+// forms one event at a time without ever calling bind().
+void test_a_passed_algorithm_is_bound_for_the_calls_that_follow(void) {
+    g_a->m_tempo_bpm_val = 137.0f;
+    g_tc->on_param_edit(*g_a);                  // binds as a side effect
+    TEST_ASSERT_EQUAL_FLOAT(137.0f, g_tc->display_bpm());
+
+    g_a->m_tempo_bpm_val = 96.0f;
+    g_tc->on_param_edit();                      // no algorithm passed
+    TEST_ASSERT_EQUAL_FLOAT(96.0f, g_tc->display_bpm());
+}
+
+// The sync flag is held from the two events that establish it, so midi_driving() need not
+// be handed one.
+void test_the_held_sync_flag_follows_preset_load_and_sync_change(void) {
+    g_tc->on_preset_load(true, *g_a);
+    TEST_ASSERT_TRUE(g_tc->sync_on());
+
+    g_tc->on_sync_change(false);
+    TEST_ASSERT_FALSE(g_tc->sync_on());
+
+    g_tc->on_sync_change(true);
+    TEST_ASSERT_TRUE(g_tc->sync_on());
+}
+
+// The clock pulse's own sync argument is a per-call override, not a statement about the
+// preset: what the preset says stays what preset load and sync change said.
+void test_a_clock_pulses_sync_argument_is_not_the_held_flag(void) {
+    g_tc->on_preset_load(true, *g_a);
+    g_tc->on_midi_clock(false, *g_a);
+    TEST_ASSERT_TRUE(g_tc->sync_on());
+}
+
+// The bound clock pulse drives the tempo on the held flag, matching what the passed form
+// does when it is given the same one.
+void test_the_bound_clock_pulse_uses_the_held_flag(void) {
+    track_clock_beat(500u);                     // 120 BPM, sync latched
+    g_tc->on_sync_change(true, *g_a);
+    TEST_ASSERT_TRUE(g_tc->midi_driving());
+
+    g_a->m_last_set_tempo = -1.0f;
+    g_tc->on_midi_clock();                      // no flag, no algorithm
+    TEST_ASSERT_TRUE(g_a->m_last_set_tempo > 0.0f);
+    TEST_ASSERT_EQUAL_INT((int)TempoSource::Midi, (int)g_tc->tempo_source());
+}
+
+// ---------------------------------------------------------------------------
+// tick(): the LED and the generated clock
+// ---------------------------------------------------------------------------
+
+// The LED flashes at the algorithm's beat, lit for the first quarter of it.
+void test_tick_flashes_the_led_at_the_algorithms_beat(void) {
+    g_a->m_beat_period_ms = 400u;
+    g_tc->bind(*g_a);
+
+    g_tc->tick(1000u);                          // phase 0: the downbeat is lit
+    TEST_ASSERT_TRUE(pedal_core::hal::fake_led(1));
+
+    g_tc->tick(1200u);                          // phase 200 of 400: past the quarter
+    TEST_ASSERT_FALSE(pedal_core::hal::fake_led(1));
+
+    g_tc->tick(1400u);                          // phase wraps: lit again
+    TEST_ASSERT_TRUE(pedal_core::hal::fake_led(1));
+}
+
+// The first tick has no interval behind it, so the beat starts at its downbeat rather
+// than wherever the boot happened to land in the bar.
+void test_the_first_tick_does_not_jump_the_beat(void) {
+    g_a->m_beat_period_ms = 400u;
+    g_tc->bind(*g_a);
+
+    g_tc->tick(5000u);                          // a long way from zero
+    TEST_ASSERT_TRUE(pedal_core::hal::fake_led(1));   // phase 0, not 5000 % 400
+}
+
+// An algorithm with no beat has nothing to flash, so the LED shows what the product is
+// holding there instead.
+void test_tick_shows_the_idle_state_where_there_is_no_beat(void) {
+    g_a->m_beat_period_ms = 0u;                 // a reverb, a pitch shifter
+    g_tc->bind(*g_a);
+
+    g_tc->tick(1000u, /*idle_on=*/true);
+    TEST_ASSERT_TRUE(pedal_core::hal::fake_led(1));
+
+    g_tc->tick(1016u, /*idle_on=*/false);
+    TEST_ASSERT_FALSE(pedal_core::hal::fake_led(1));
+}
+
+// A beat outranks the idle state: a tempo is what the LED is for, and something a player
+// reads continuously beats something they already know because they are standing on it.
+void test_a_beat_outranks_the_idle_state(void) {
+    g_a->m_beat_period_ms = 400u;
+    g_tc->bind(*g_a);
+
+    g_tc->tick(1000u, /*idle_on=*/true);
+    TEST_ASSERT_TRUE(pedal_core::hal::fake_led(1));
+    g_tc->tick(1200u, /*idle_on=*/true);        // past the lit quarter
+    TEST_ASSERT_FALSE(pedal_core::hal::fake_led(1));
+}
+
+// The generator runs on the tempo the pedal is showing, and is polled with the caller's
+// clock so its pacing is the loop's.
+void test_tick_gives_the_generator_the_tempo_and_the_clock(void) {
+    g_tc->bind(*g_a);
+    g_tc->on_set_bpm(90.0f);
+
+    g_tc->tick(1234u);
+    TEST_ASSERT_EQUAL_FLOAT(90.0f, midi_clock_out::fake_clock_bpm());
+    TEST_ASSERT_EQUAL_UINT32(1234u, midi_clock_out::fake_clock_last_poll_ms());
+    TEST_ASSERT_EQUAL_UINT(1u, midi_clock_out::fake_clock_polls());
+}
+
+// Exactly one clock leaves the jack. With nothing driving the pedal it is the master, so
+// its own generator runs.
+void test_tick_runs_the_generator_when_the_pedal_is_the_master(void) {
+    g_tc->bind(*g_a);
+    g_tc->on_param_edit();                      // a local edit takes over from MIDI
+    TEST_ASSERT_FALSE(g_tc->midi_driving());
+
+    g_tc->tick(1000u);
+    TEST_ASSERT_TRUE(midi_clock_out::fake_clock_running());
+}
+
+// And while an incoming clock is driving the tempo the generator stops, so the pedal
+// forwards that one rather than adding a second of its own.
+void test_tick_stops_the_generator_while_a_clock_is_driving(void) {
+    track_clock_beat(500u);
+    g_tc->on_sync_change(true, *g_a);
+    TEST_ASSERT_TRUE(g_tc->midi_driving());
+
+    g_tc->tick(1000u);
+    TEST_ASSERT_FALSE(midi_clock_out::fake_clock_running());
+
+    // A tap takes the tempo back, and the pedal becomes the master again.
+    g_tc->on_tap();
+    systick::fake_advance_ms(500u);
+    g_tc->on_tap();
+    TEST_ASSERT_FALSE(g_tc->midi_driving());
+
+    g_tc->tick(2000u);
+    TEST_ASSERT_TRUE(midi_clock_out::fake_clock_running());
+}
+
+// An unbound controller is inert rather than a crash: a product that ticks before it has
+// an algorithm gets no beat, not a dereferenced null.
+void test_tick_without_an_algorithm_is_inert(void) {
+    TempoController fresh;
+    fresh.init();
+    fresh.tick(1000u, /*idle_on=*/false);
+    TEST_ASSERT_FALSE(pedal_core::hal::fake_led(1));
+    TEST_ASSERT_EQUAL_UINT(1u, midi_clock_out::fake_clock_polls());
+}
+
+// The interface's default is "no beat", so an algorithm that never heard of the tempo
+// layer leaves the LED to the product.
+void test_an_algorithm_with_no_beat_reports_none(void) {
+    UntimedAlgorithm untimed;
+    TEST_ASSERT_EQUAL_UINT32(0u, untimed.beat_period_ms());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_param_edit_shows_param_bpm_and_disarms);
@@ -346,5 +552,19 @@ int main(int, char**) {
     RUN_TEST(test_algo_change_hands_over_the_held_tempo);
     RUN_TEST(test_algo_change_leaves_the_readout_and_the_source_alone);
     RUN_TEST(test_algo_change_leaves_midi_armed);
+    RUN_TEST(test_the_bound_form_and_the_passed_form_agree);
+    RUN_TEST(test_a_passed_algorithm_is_bound_for_the_calls_that_follow);
+    RUN_TEST(test_the_held_sync_flag_follows_preset_load_and_sync_change);
+    RUN_TEST(test_a_clock_pulses_sync_argument_is_not_the_held_flag);
+    RUN_TEST(test_the_bound_clock_pulse_uses_the_held_flag);
+    RUN_TEST(test_tick_flashes_the_led_at_the_algorithms_beat);
+    RUN_TEST(test_the_first_tick_does_not_jump_the_beat);
+    RUN_TEST(test_tick_shows_the_idle_state_where_there_is_no_beat);
+    RUN_TEST(test_a_beat_outranks_the_idle_state);
+    RUN_TEST(test_tick_gives_the_generator_the_tempo_and_the_clock);
+    RUN_TEST(test_tick_runs_the_generator_when_the_pedal_is_the_master);
+    RUN_TEST(test_tick_stops_the_generator_while_a_clock_is_driving);
+    RUN_TEST(test_tick_without_an_algorithm_is_inert);
+    RUN_TEST(test_an_algorithm_with_no_beat_reports_none);
     return UNITY_END();
 }
