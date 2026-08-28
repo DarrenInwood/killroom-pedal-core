@@ -29,6 +29,13 @@ public:
     // waiting for a preset reload. Same arm-and-seed logic as a preset load.
     void on_sync_change(bool sync_on, IAlgorithm& a);
 
+    // The live algorithm changed. Restart the tempo LED so its beat phase starts at the
+    // new sound rather than mid-flash, and hand that algorithm the tempo the pedal is
+    // already holding, so it arrives in time instead of at its own default. The displayed
+    // BPM and the armed source are untouched: which algorithm is playing is not a statement
+    // about where the tempo came from.
+    void on_algo_change(IAlgorithm& a);
+
     // Tap tempo: on a tap that measures a new tempo (>=2 taps), drive the parameter from the
     // tapped BPM and take over from MIDI sync; returns true. A lone first tap is inert (no
     // tempo change, MIDI sync untouched) and returns false.

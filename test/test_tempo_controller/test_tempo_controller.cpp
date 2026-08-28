@@ -283,6 +283,46 @@ void test_an_algorithm_with_no_tempo_leaves_the_last_one_standing(void) {
     TEST_ASSERT_FLOAT_WITHIN(0.01f, established, g_tc->display_bpm());
 }
 
+
+// An algorithm change hands the incoming algorithm the tempo the pedal is already
+// holding, so a sound selected mid-song arrives in time rather than at its own default.
+void test_algo_change_hands_over_the_held_tempo(void) {
+    // Establish a tapped tempo: two taps 500 ms apart is 120 BPM.
+    g_tc->on_tap(*g_a);
+    systick::fake_advance_ms(500);
+    g_tc->on_tap(*g_a);
+
+    FakeAlgorithm incoming;
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, incoming.m_last_set_tempo);  // untouched
+    g_tc->on_algo_change(incoming);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, tap_tempo::get_bpm(), incoming.m_last_set_tempo);
+}
+
+// Which algorithm is playing is not a statement about where the tempo came from, so the
+// readout and the armed source are left exactly as they were.
+void test_algo_change_leaves_the_readout_and_the_source_alone(void) {
+    g_a->m_tempo_bpm_val = 137.0f;
+    g_tc->on_param_edit(*g_a);            // Param source, MIDI disarmed, 137 showing
+    const float       bpm = g_tc->display_bpm();
+    const TempoSource src = g_tc->tempo_source();
+
+    FakeAlgorithm incoming;
+    g_tc->on_algo_change(incoming);
+
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, bpm, g_tc->display_bpm());
+    TEST_ASSERT_EQUAL_INT((int)src, (int)g_tc->tempo_source());
+    TEST_ASSERT_FALSE(g_tc->midi_armed());
+}
+
+// Arming is likewise untouched: a preset with sync on stays armed across a change of
+// algorithm, so the next clock pulse still drives the tempo.
+void test_algo_change_leaves_midi_armed(void) {
+    g_tc->on_sync_change(true, *g_a);
+    TEST_ASSERT_TRUE(g_tc->midi_armed());
+    FakeAlgorithm incoming;
+    g_tc->on_algo_change(incoming);
+    TEST_ASSERT_TRUE(g_tc->midi_armed());
+}
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_param_edit_shows_param_bpm_and_disarms);
@@ -303,5 +343,8 @@ int main(int, char**) {
     RUN_TEST(test_sync_change_disable_disarms);
     RUN_TEST(test_show_clamps_param_bpm_to_range);
     RUN_TEST(test_an_algorithm_with_no_tempo_leaves_the_last_one_standing);
+    RUN_TEST(test_algo_change_hands_over_the_held_tempo);
+    RUN_TEST(test_algo_change_leaves_the_readout_and_the_source_alone);
+    RUN_TEST(test_algo_change_leaves_midi_armed);
     return UNITY_END();
 }

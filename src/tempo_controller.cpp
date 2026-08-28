@@ -2,6 +2,7 @@
 
 #include <pedal_core/tempo_controller.hpp>
 #include <pedal_core/tap_tempo.hpp>
+#include <pedal_core/tempo_led.hpp>
 
 void TempoController::init()
 {
@@ -46,6 +47,17 @@ void TempoController::on_sync_change(bool sync_on, IAlgorithm& a)
         // Otherwise derive the displayed tempo from the current parameter.
         show(a.tempo_bpm(), TempoSource::Param);
     }
+}
+
+void TempoController::on_algo_change(IAlgorithm& a)
+{
+    // The LED is locked to the algorithm's own rate, so a change restarts its phase —
+    // tempo_led.hpp asks for exactly this on an algorithm change.
+    tempo_led::reset();
+    // Hand over the tempo the tap/clock engine is holding. show() is deliberately not
+    // called: the tempo did not change, only the algorithm reading it, so neither the
+    // displayed BPM nor the '*' that names its source has anything new to say.
+    a.set_tempo(tap_tempo::get_bpm());
 }
 
 bool TempoController::on_tap(IAlgorithm& a)
