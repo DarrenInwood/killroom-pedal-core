@@ -13,6 +13,7 @@ PlatformIO's library dependency finder picks it up from there via
 | Module | Kind | What it is |
 |---|---|---|
 | `pedal_core/crc16.hpp` | pure header | CRC-16/CCITT-FALSE, the one integrity check every EEPROM block uses |
+| `pedal_core/action.hpp` | pure header | What a switch does: the one vocabulary the panel switches and the external jack are both assigned from, and the row width its names imply |
 | `pedal_core/adc_filter.hpp` | pure header | Fixed-point EMA (α = 1/64) for pot smoothing |
 | `pedal_core/adc_map.hpp` | pure header | 12-bit ADC code → parameter value, raw and calibrated |
 | `pedal_core/encoder_decode.hpp` | pure header | Quadrature decode table, quarter-steps → detents |
