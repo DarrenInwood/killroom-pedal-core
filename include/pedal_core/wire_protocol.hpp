@@ -228,6 +228,63 @@ inline constexpr uint8_t TX_PARAMS  = 10u;  // 0 or 1
 inline constexpr uint8_t TX_STATE   = 11u;  // tx_state::*
 inline constexpr uint8_t LEN        = 12u;
 
+// The block as a value, in the wire's own vocabulary: every field is the byte the
+// payload carries, so a sentinel here is the wire's sentinel and a mode here is one of
+// the constants above. What a pedal does with it is midi_routing.hpp's business.
+//
+// The defaults are the behaviour a pedal has with no block stored, so a default value
+// round-trips to a default configuration rather than to a silent jack.
+struct RoutingBlock {
+    uint8_t rx_channel = 0u;                       // 0-15
+    bool    omni       = false;
+    uint8_t tx_channel = TX_CHANNEL_FOLLOW_RX;     // 0-15, or the follow sentinel
+    uint8_t out        = out_mode::MERGE;
+    uint8_t pc_offset  = 0u;                       // 0-127
+    bool    clock_out  = false;
+    bool    clock_thru = true;
+    uint8_t usb_din_route = usb_din::OFF;
+    bool    rx_pc      = true;
+    bool    rx_sysex   = true;
+    bool    tx_params  = true;
+    uint8_t tx         = tx_state::OFF;
+};
+
+// Read the block out of a LEN-byte payload. Values are taken as sent: a byte outside
+// its range is the pedal's to clamp, which is what applying the block does.
+inline void read_block(const uint8_t* p, RoutingBlock& out)
+{
+    out.rx_channel    = (uint8_t)(p[RX_CHANNEL] & 0x7Fu);
+    out.omni          = (p[OMNI] != 0u);
+    out.tx_channel    = (uint8_t)(p[TX_CHANNEL] & 0x7Fu);
+    out.out           = (uint8_t)(p[OUT_MODE] & 0x7Fu);
+    out.pc_offset     = (uint8_t)(p[PC_OFFSET] & 0x7Fu);
+    out.clock_out     = (p[CLOCK_OUT] != 0u);
+    out.clock_thru    = (p[CLOCK_THRU] != 0u);
+    out.usb_din_route = (uint8_t)(p[USB_DIN] & 0x7Fu);
+    out.rx_pc         = (p[RX_PC] != 0u);
+    out.rx_sysex      = (p[RX_SYSEX] != 0u);
+    out.tx_params     = (p[TX_PARAMS] != 0u);
+    out.tx            = (uint8_t)(p[TX_STATE] & 0x7Fu);
+}
+
+// Lay the block into a LEN-byte payload, in the order this namespace gives, so a host
+// writes back exactly what it read.
+inline void write_block(const RoutingBlock& b, uint8_t* out)
+{
+    out[RX_CHANNEL] = (uint8_t)(b.rx_channel & 0x7Fu);
+    out[OMNI]       = b.omni ? 1u : 0u;
+    out[TX_CHANNEL] = (uint8_t)(b.tx_channel & 0x7Fu);
+    out[OUT_MODE]   = (uint8_t)(b.out & 0x7Fu);
+    out[PC_OFFSET]  = (uint8_t)(b.pc_offset & 0x7Fu);
+    out[CLOCK_OUT]  = b.clock_out ? 1u : 0u;
+    out[CLOCK_THRU] = b.clock_thru ? 1u : 0u;
+    out[USB_DIN]    = (uint8_t)(b.usb_din_route & 0x7Fu);
+    out[RX_PC]      = b.rx_pc ? 1u : 0u;
+    out[RX_SYSEX]   = b.rx_sysex ? 1u : 0u;
+    out[TX_PARAMS]  = b.tx_params ? 1u : 0u;
+    out[TX_STATE]   = (uint8_t)(b.tx & 0x7Fu);
+}
+
 }  // namespace midi_routing
 
 // The wire sentinel for "no expression assignment". The record keeps 0xFF,
@@ -530,6 +587,167 @@ inline bool parse_preset(const uint8_t* f, uint16_t len, uint8_t device, PresetV
 
     out.tlv     = &f[i];
     out.tlv_len = (uint16_t)(end - i);
+    return true;
+}
+
+
+// --- the global frame -------------------------------------------------------
+//
+//   F0 <mfr> <dev> <cmd> <TLV...> F7
+//
+// Everything the pedal holds that is not part of a preset. Unlike the preset frame there
+// is no fixed head at all: every field rides as a TLV record, so a product sends only
+// what it has, and a reader skips a tag it does not know by length.
+//
+// Each field therefore carries whether it was present. A tag the frame omits is not a
+// zero — it is a question the pedal was not asked, and applying it as a value would turn
+// a capability the product lacks into a setting it appears to have turned off.
+
+struct NoiseSettings {
+    bool    enabled   = false;
+    uint8_t threshold = 0u;
+    uint8_t depth     = 0u;
+};
+
+// The jack's mode, and the action each of its three contacts carries. The hold
+// assignments are the optional tail: a device that predates them sends four bytes.
+struct ExtInputSettings {
+    uint8_t mode     = 0u;
+    uint8_t press[3] = {};      // tip, ring, both
+    uint8_t hold[3]  = {};
+    bool    has_holds = false;
+};
+
+struct GlobalView {
+    uint8_t                    channel       = 0u;     // 0-15, or MIDI_CHANNEL_OMNI
+    NoiseSettings              noise{};
+    ExtInputSettings           ext_input{};
+    bool                       bypass_active = true;
+    midi_routing::RoutingBlock routing{};
+    uint8_t                    scene_active  = 0u;     // 0 Scene A, 1 Scene B
+
+    bool has_channel      = false;
+    bool has_noise        = false;
+    bool has_ext_input    = false;
+    bool has_bypass       = false;
+    bool has_routing      = false;
+    bool has_scene_active = false;
+};
+
+// The largest global frame a product can produce, so it can size its buffer once from a
+// constant rather than guessing. Every record at its longest, which is the ext-input
+// tail's seven bytes and nothing else optional.
+inline constexpr uint16_t GLOBAL_FRAME_MAX =
+    (uint16_t)(5u                                  // F0 mfr dev cmd ... F7
+               + (2u + 1u)                         // CHANNEL
+               + (2u + 3u)                         // NOISE
+               + (2u + 7u)                         // EXT_INPUT with holds
+               + (2u + 1u)                         // BYPASS
+               + (2u + (uint16_t)midi_routing::LEN)// MIDI_ROUTING
+               + (2u + 1u));                       // SCENE_ACTIVE
+
+// Returns the frame length, or 0 if the buffer was too small. A record whose field was
+// not present is not written: what a product does not have, it does not send.
+inline uint16_t build_global(const GlobalView& g, uint8_t device, uint8_t* out, uint16_t cap)
+{
+    Writer w(out, cap);
+    w.header(device, cmd::GLOBAL_DATA);
+
+    if (g.has_channel) {
+        const uint8_t v = g.channel;
+        w.tlv(global_tag::CHANNEL, &v, 1u);
+    }
+    if (g.has_noise) {
+        const uint8_t v[3] = { (uint8_t)(g.noise.enabled ? 1u : 0u),
+                               g.noise.threshold, g.noise.depth };
+        w.tlv(global_tag::NOISE, v, 3u);
+    }
+    if (g.has_ext_input) {
+        const uint8_t v[7] = { g.ext_input.mode,
+                               g.ext_input.press[0], g.ext_input.press[1], g.ext_input.press[2],
+                               g.ext_input.hold[0],  g.ext_input.hold[1],  g.ext_input.hold[2] };
+        w.tlv(global_tag::EXT_INPUT, v, g.ext_input.has_holds ? 7u : 4u);
+    }
+    if (g.has_bypass) {
+        const uint8_t v = g.bypass_active ? 1u : 0u;
+        w.tlv(global_tag::BYPASS, &v, 1u);
+    }
+    if (g.has_routing) {
+        uint8_t v[midi_routing::LEN] = {};
+        midi_routing::write_block(g.routing, v);
+        w.tlv(global_tag::MIDI_ROUTING, v, midi_routing::LEN);
+    }
+    if (g.has_scene_active) {
+        const uint8_t v = g.scene_active;
+        w.tlv(global_tag::SCENE_ACTIVE, &v, 1u);
+    }
+
+    w.end();
+    return w.length();
+}
+
+// Decode a global frame. Returns false for anything that does not add up — a foreign
+// manufacturer, the wrong device, the wrong command. A record shorter than the field it
+// names is left absent rather than half-believed: a frame from an editor is as untrusted
+// as one off a corrupt page.
+inline bool parse_global(const uint8_t* f, uint16_t len, uint8_t device, GlobalView& out)
+{
+    if (f == nullptr || len < 5u) return false;
+    if (f[0] != SYSEX_START || f[1] != MANUFACTURER_ID || f[2] != device) return false;
+    if (f[len - 1u] != SYSEX_END) return false;
+    if (f[3] != cmd::GLOBAL_DATA) return false;
+
+    out = GlobalView{};
+
+    TlvReader r(&f[4], (uint16_t)(len - 5u));
+    Tlv t{};
+    while (r.next(t)) {
+        switch (t.tag) {
+            case global_tag::CHANNEL:
+                if (t.len < 1u) break;
+                out.channel     = t.value[0];
+                out.has_channel = true;
+                break;
+            case global_tag::NOISE:
+                if (t.len < 3u) break;
+                out.noise.enabled   = (t.value[0] != 0u);
+                out.noise.threshold = t.value[1];
+                out.noise.depth     = t.value[2];
+                out.has_noise       = true;
+                break;
+            case global_tag::EXT_INPUT:
+                if (t.len < 4u) break;
+                out.ext_input.mode     = t.value[0];
+                out.ext_input.press[0] = t.value[1];
+                out.ext_input.press[1] = t.value[2];
+                out.ext_input.press[2] = t.value[3];
+                if (t.len >= 7u) {
+                    out.ext_input.hold[0]   = t.value[4];
+                    out.ext_input.hold[1]   = t.value[5];
+                    out.ext_input.hold[2]   = t.value[6];
+                    out.ext_input.has_holds = true;
+                }
+                out.has_ext_input = true;
+                break;
+            case global_tag::BYPASS:
+                if (t.len < 1u) break;
+                out.bypass_active = (t.value[0] != 0u);
+                out.has_bypass    = true;
+                break;
+            case global_tag::MIDI_ROUTING:
+                if (t.len < midi_routing::LEN) break;
+                midi_routing::read_block(t.value, out.routing);
+                out.has_routing = true;
+                break;
+            case global_tag::SCENE_ACTIVE:
+                if (t.len < 1u) break;
+                out.scene_active     = t.value[0];
+                out.has_scene_active = true;
+                break;
+            default:
+                break;   // a tag this firmware does not know, skipped by length
+        }
+    }
     return true;
 }
 

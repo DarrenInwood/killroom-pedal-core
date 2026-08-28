@@ -472,6 +472,214 @@ void test_uid_rejects_a_truncated_payload(void) {
     }
 }
 
+
+// --- the global frame ------------------------------------------------------
+
+// A GlobalView with every field present and nothing left at its default, so a field that
+// fails to survive the round trip shows up as itself rather than as a coincidence.
+static GlobalView sample_global(void) {
+    GlobalView g{};
+    g.channel = 9u;                     g.has_channel = true;
+    g.noise.enabled = true;
+    g.noise.threshold = 40u;
+    g.noise.depth = 77u;                g.has_noise = true;
+    g.ext_input.mode = 1u;
+    g.ext_input.press[0] = 4u; g.ext_input.press[1] = 3u; g.ext_input.press[2] = 2u;
+    g.ext_input.hold[0]  = 8u; g.ext_input.hold[1]  = 13u; g.ext_input.hold[2] = 11u;
+    g.ext_input.has_holds = true;       g.has_ext_input = true;
+    g.bypass_active = false;            g.has_bypass = true;
+    g.scene_active = 1u;                g.has_scene_active = true;
+
+    g.routing.rx_channel = 5u;
+    g.routing.omni = true;
+    g.routing.tx_channel = 11u;
+    g.routing.out = midi_routing::out_mode::THRU;
+    g.routing.pc_offset = 1u;
+    g.routing.clock_out = true;
+    g.routing.clock_thru = false;
+    g.routing.usb_din_route = midi_routing::usb_din::BOTH;
+    g.routing.rx_pc = false;
+    g.routing.rx_sysex = false;
+    g.routing.tx_params = false;
+    g.routing.tx = midi_routing::tx_state::PC_BYPASS;
+    g.has_routing = true;
+    return g;
+}
+
+void test_global_round_trips(void) {
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    const GlobalView sent = sample_global();
+    const uint16_t n = build_global(sent, 0x01u, buf, sizeof(buf));
+    TEST_ASSERT_TRUE(n > 0);
+    TEST_ASSERT_TRUE(all_data_bytes_7bit(buf, n));
+
+    GlobalView got{};
+    TEST_ASSERT_TRUE(parse_global(buf, n, 0x01u, got));
+
+    TEST_ASSERT_TRUE(got.has_channel);      TEST_ASSERT_EQUAL_UINT8(9u, got.channel);
+    TEST_ASSERT_TRUE(got.has_noise);
+    TEST_ASSERT_TRUE(got.noise.enabled);
+    TEST_ASSERT_EQUAL_UINT8(40u, got.noise.threshold);
+    TEST_ASSERT_EQUAL_UINT8(77u, got.noise.depth);
+    TEST_ASSERT_TRUE(got.has_ext_input);
+    TEST_ASSERT_EQUAL_UINT8(1u, got.ext_input.mode);
+    TEST_ASSERT_EQUAL_UINT8(4u, got.ext_input.press[0]);
+    TEST_ASSERT_EQUAL_UINT8(2u, got.ext_input.press[2]);
+    TEST_ASSERT_TRUE(got.ext_input.has_holds);
+    TEST_ASSERT_EQUAL_UINT8(8u,  got.ext_input.hold[0]);
+    TEST_ASSERT_EQUAL_UINT8(11u, got.ext_input.hold[2]);
+    TEST_ASSERT_TRUE(got.has_bypass);       TEST_ASSERT_FALSE(got.bypass_active);
+    TEST_ASSERT_TRUE(got.has_scene_active); TEST_ASSERT_EQUAL_UINT8(1u, got.scene_active);
+}
+
+// All twelve bytes of the routing block survive the trip. The block is the one record a
+// host writes back exactly as it read it, so a field that silently reverts is a setting
+// the player cannot change.
+void test_global_routing_block_round_trips_every_field(void) {
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    const uint16_t n = build_global(sample_global(), 0x01u, buf, sizeof(buf));
+    GlobalView got{};
+    TEST_ASSERT_TRUE(parse_global(buf, n, 0x01u, got));
+    TEST_ASSERT_TRUE(got.has_routing);
+
+    TEST_ASSERT_EQUAL_UINT8(5u,  got.routing.rx_channel);
+    TEST_ASSERT_TRUE(got.routing.omni);
+    TEST_ASSERT_EQUAL_UINT8(11u, got.routing.tx_channel);
+    TEST_ASSERT_EQUAL_UINT8(midi_routing::out_mode::THRU, got.routing.out);
+    TEST_ASSERT_EQUAL_UINT8(1u,  got.routing.pc_offset);
+    TEST_ASSERT_TRUE(got.routing.clock_out);
+    TEST_ASSERT_FALSE(got.routing.clock_thru);
+    TEST_ASSERT_EQUAL_UINT8(midi_routing::usb_din::BOTH, got.routing.usb_din_route);
+    TEST_ASSERT_FALSE(got.routing.rx_pc);
+    TEST_ASSERT_FALSE(got.routing.rx_sysex);
+    TEST_ASSERT_FALSE(got.routing.tx_params);
+    TEST_ASSERT_EQUAL_UINT8(midi_routing::tx_state::PC_BYPASS, got.routing.tx);
+}
+
+// The follow-the-receive-channel sentinel is 0x7F on the wire, because 0xFF is not a
+// legal SysEx data byte. It has to survive as itself rather than as channel 127.
+void test_global_carries_the_follow_sentinel(void) {
+    GlobalView g{};
+    g.has_routing = true;                       // a default block already means follow
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    const uint16_t n = build_global(g, 0x01u, buf, sizeof(buf));
+    TEST_ASSERT_TRUE(all_data_bytes_7bit(buf, n));
+
+    GlobalView got{};
+    TEST_ASSERT_TRUE(parse_global(buf, n, 0x01u, got));
+    TEST_ASSERT_EQUAL_UINT8(midi_routing::TX_CHANNEL_FOLLOW_RX, got.routing.tx_channel);
+}
+
+// What a product does not have, it does not send, and what a frame does not carry is a
+// question the pedal was not asked rather than a setting turned off.
+void test_global_omits_the_fields_a_product_does_not_have(void) {
+    GlobalView g{};
+    g.channel = 3u; g.has_channel = true;       // a pedal with nothing else to report
+
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    const uint16_t n = build_global(g, 0x01u, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_UINT16(5u + 2u + 1u, n);  // the envelope and one record
+
+    GlobalView got{};
+    TEST_ASSERT_TRUE(parse_global(buf, n, 0x01u, got));
+    TEST_ASSERT_TRUE(got.has_channel);
+    TEST_ASSERT_FALSE(got.has_noise);
+    TEST_ASSERT_FALSE(got.has_ext_input);
+    TEST_ASSERT_FALSE(got.has_bypass);
+    TEST_ASSERT_FALSE(got.has_routing);
+    TEST_ASSERT_FALSE(got.has_scene_active);
+}
+
+// A jack that predates the hold assignments sends four bytes, and a reader that knows
+// about them reads the shorter record without inventing three actions.
+void test_global_ext_input_without_the_hold_tail(void) {
+    GlobalView g{};
+    g.ext_input.mode = 1u;
+    g.ext_input.press[0] = 4u; g.ext_input.press[1] = 3u; g.ext_input.press[2] = 2u;
+    g.ext_input.hold[0] = 9u;                   // set, but not sent
+    g.ext_input.has_holds = false;
+    g.has_ext_input = true;
+
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    const uint16_t n = build_global(g, 0x01u, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_UINT16(5u + 2u + 4u, n);
+
+    GlobalView got{};
+    TEST_ASSERT_TRUE(parse_global(buf, n, 0x01u, got));
+    TEST_ASSERT_TRUE(got.has_ext_input);
+    TEST_ASSERT_FALSE(got.ext_input.has_holds);
+    TEST_ASSERT_EQUAL_UINT8(4u, got.ext_input.press[0]);
+    TEST_ASSERT_EQUAL_UINT8(0u, got.ext_input.hold[0]);
+}
+
+// An empty frame is valid: a pedal with nothing to report still answers the query.
+void test_global_with_no_records_is_valid(void) {
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    const uint16_t n = build_global(GlobalView{}, 0x01u, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_UINT16(5u, n);
+    GlobalView got{};
+    TEST_ASSERT_TRUE(parse_global(buf, n, 0x01u, got));
+    TEST_ASSERT_FALSE(got.has_channel);
+}
+
+// A tag a firmware does not know is skipped by length, and the records around it still
+// read: the property protocol 3 exists to provide.
+void test_global_skips_a_tag_it_does_not_know(void) {
+    uint8_t buf[GLOBAL_FRAME_MAX + 8u] = {};
+    Writer w(buf, sizeof(buf));
+    w.header(0x01u, cmd::GLOBAL_DATA);
+    const uint8_t future[3] = { 1u, 2u, 3u };
+    w.tlv(0x7Au, future, 3u);                   // a tag from a later firmware
+    const uint8_t ch = 7u;
+    w.tlv(global_tag::CHANNEL, &ch, 1u);
+    w.end();
+
+    GlobalView got{};
+    TEST_ASSERT_TRUE(parse_global(buf, w.length(), 0x01u, got));
+    TEST_ASSERT_TRUE(got.has_channel);
+    TEST_ASSERT_EQUAL_UINT8(7u, got.channel);
+}
+
+// A record shorter than the field it names is left absent rather than half-believed.
+void test_global_leaves_a_short_record_absent(void) {
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    Writer w(buf, sizeof(buf));
+    w.header(0x01u, cmd::GLOBAL_DATA);
+    const uint8_t half[2] = { 1u, 40u };        // NOISE wants three
+    w.tlv(global_tag::NOISE, half, 2u);
+    w.end();
+
+    GlobalView got{};
+    TEST_ASSERT_TRUE(parse_global(buf, w.length(), 0x01u, got));
+    TEST_ASSERT_FALSE(got.has_noise);
+}
+
+void test_global_rejects_another_product(void) {
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    const uint16_t n = build_global(sample_global(), 0x01u, buf, sizeof(buf));
+    GlobalView got{};
+    TEST_ASSERT_FALSE(parse_global(buf, n, 0x02u, got));
+}
+
+void test_global_rejects_an_unrelated_command(void) {
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    const uint16_t n = build_global(sample_global(), 0x01u, buf, sizeof(buf));
+    buf[3] = cmd::VERSION_DATA;
+    GlobalView got{};
+    TEST_ASSERT_FALSE(parse_global(buf, n, 0x01u, got));
+}
+
+void test_global_refuses_a_short_buffer(void) {
+    uint8_t small[8] = {};
+    TEST_ASSERT_EQUAL_UINT16(0u, build_global(sample_global(), 0x01u, small, sizeof(small)));
+}
+
+// The advertised maximum really does hold the largest frame a product can build.
+void test_global_frame_max_holds_every_record(void) {
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    TEST_ASSERT_TRUE(build_global(sample_global(), 0x01u, buf, sizeof(buf)) > 0);
+}
+
 int main(int, char**)
 {
     UNITY_BEGIN();
@@ -508,5 +716,17 @@ int main(int, char**)
     RUN_TEST(test_uid_rejects_a_high_byte_difference);
     RUN_TEST(test_uid_rejects_an_unaddressed_command);
     RUN_TEST(test_uid_rejects_a_truncated_payload);
+    RUN_TEST(test_global_round_trips);
+    RUN_TEST(test_global_routing_block_round_trips_every_field);
+    RUN_TEST(test_global_carries_the_follow_sentinel);
+    RUN_TEST(test_global_omits_the_fields_a_product_does_not_have);
+    RUN_TEST(test_global_ext_input_without_the_hold_tail);
+    RUN_TEST(test_global_with_no_records_is_valid);
+    RUN_TEST(test_global_skips_a_tag_it_does_not_know);
+    RUN_TEST(test_global_leaves_a_short_record_absent);
+    RUN_TEST(test_global_rejects_another_product);
+    RUN_TEST(test_global_rejects_an_unrelated_command);
+    RUN_TEST(test_global_refuses_a_short_buffer);
+    RUN_TEST(test_global_frame_max_holds_every_record);
     return UNITY_END();
 }
