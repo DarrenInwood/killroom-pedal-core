@@ -28,6 +28,13 @@ jobs:
       - name: The netlist parser reads a fixture correctly
         run: python tools/kicad/test_netlist.py
 
+      # A screenshot's compressed bytes depend on the zlib build that wrote them, so a
+      # regenerated-but-unchanged screen is a different file holding the same picture.
+      # Consumers regenerate on a checklist, so without this every run churns every PNG
+      # and buries the one that actually moved.
+      - name: Screens are rewritten only when their pixels change
+        run: python tools/test_oled_png.py
+
       # This library's own docs, by the same gate the consumers run over theirs.
       - name: Every relative doc link resolves
         run: python tools/check_doc_links.py

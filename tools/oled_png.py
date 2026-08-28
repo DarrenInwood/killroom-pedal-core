@@ -119,17 +119,72 @@ def _chunk(tag: bytes, data: bytes) -> bytes:
             + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
 
 
+def _holds_already(path: Path, ihdr: bytes, plte: bytes, raw: bytes) -> bool:
+    """True when the file at `path` already holds exactly this picture.
+
+    Compares the decoded scanlines, the palette and the header, and ignores every other
+    chunk. Decoded, because the compressed bytes are the one thing that cannot be trusted:
+    deflate output depends on the zlib build that produced it, so an unchanged screen
+    re-encoded elsewhere is a different file holding an identical picture. Ignoring other
+    chunks matters just as much -- a consumer that stamps its own pHYs in afterwards would
+    otherwise see every screen rewritten on the next run.
+
+    Any surprise (missing, truncated, not a PNG, multiple IDATs that will not inflate)
+    answers False, so the caller writes. This decides whether to skip work, never whether
+    the output is correct.
+    """
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return False
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return False
+
+    found_ihdr = found_plte = None
+    idat = bytearray()
+    i = 8
+    while i + 8 <= len(data):
+        length = int.from_bytes(data[i:i + 4], "big")
+        tag = data[i + 4:i + 8]
+        body = data[i + 8:i + 8 + length]
+        if len(body) != length:
+            return False                      # truncated
+        if tag == b"IHDR":
+            found_ihdr = body
+        elif tag == b"PLTE":
+            found_plte = body
+        elif tag == b"IDAT":
+            idat += body                      # a writer may split the stream
+        i += 12 + length
+
+    if found_ihdr != ihdr or found_plte != plte:
+        return False
+    try:
+        return zlib.decompress(bytes(idat)) == raw
+    except zlib.error:
+        return False
+
+
 def write_png(path: Path, width: int, height: int, indices: bytearray,
-              palette: list[tuple[int, int, int]]) -> None:
-    """An 8-bit palette PNG. Two or three colours compress to a few KB at this size."""
+              palette: list[tuple[int, int, int]]) -> bool:
+    """An 8-bit palette PNG. Two or three colours compress to a few KB at this size.
+
+    Writes only when the file does not already hold this picture, and returns whether it
+    wrote. Regenerating screenshots is a routine step in a consumer's checklist, so a run
+    that changed one screen has to leave a diff naming that one screen.
+    """
     plte = b"".join(bytes(c) for c in palette)
     raw = b"".join(b"\x00" + bytes(indices[y * width : (y + 1) * width]) for y in range(height))
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 3, 0, 0, 0)
+    if _holds_already(path, ihdr, plte, raw):
+        return False
     png = (b"\x89PNG\r\n\x1a\n"
-           + _chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 3, 0, 0, 0))
+           + _chunk(b"IHDR", ihdr)
            + _chunk(b"PLTE", plte)
            + _chunk(b"IDAT", zlib.compress(raw, 9))
            + _chunk(b"IEND", b""))
     Path(path).write_bytes(png)
+    return True
 
 
 def _blit(dst: bytearray, dst_w: int, x0: int, y0: int,
@@ -195,7 +250,13 @@ def _rgb(s: str) -> tuple[int, int, int]:
 def render(frames_path, out_dir, *, scale=4, border=10, sheet=None, sheet_scale=2,
            cols=5, gap=4, bg=DEFAULT_BG, off=DEFAULT_OFF, on=DEFAULT_ON,
            log=print) -> list[Path]:
-    """Write one PNG per frame into out_dir, and optionally `<sheet>.png` beside them."""
+    """Write one PNG per frame into out_dir, and optionally `<sheet>.png` beside them.
+
+    Returns every output path, whether or not this run had to write it: a screen that
+    already held the right picture is left alone, so regenerating after a change to one
+    screen leaves a diff naming that one screen. The log line says how many were rewritten,
+    which is the number worth checking against what you expected to change.
+    """
     frames = read_frames(Path(frames_path))
     if not frames:
         raise FrameFileError(f"{frames_path}: no frames")
@@ -204,25 +265,30 @@ def render(frames_path, out_dir, *, scale=4, border=10, sheet=None, sheet_scale=
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    written = []
+    paths = []
+    rewritten = 0
     seen = set()
     for f in frames:
         if f.slug in seen:
             raise FrameFileError(f"{frames_path}: two frames both named {f.slug!r}")
         seen.add(f.slug)
         path = out_dir / f"{f.slug}.png"
-        write_png(path, *frame_image(f, scale, border), palette)
-        written.append(path)
+        rewritten += write_png(path, *frame_image(f, scale, border), palette)
+        paths.append(path)
 
     if sheet:
         path = out_dir / f"{sheet}.png"
-        write_png(path, *sheet_image(frames, cols, sheet_scale, border, gap), palette)
-        written.append(path)
+        # The sheet tiles every screen, so it changes whenever any of them does -- through
+        # the same rule, which is what keeps it out of a diff when none of them did.
+        rewritten += write_png(path, *sheet_image(frames, cols, sheet_scale, border, gap),
+                               palette)
+        paths.append(path)
 
     if log:
         log(f"oled_png: {len(frames)} screens -> {out_dir}"
-            + (f", contact sheet {sheet}.png" if sheet else ""))
-    return written
+            + (f", contact sheet {sheet}.png" if sheet else "")
+            + (f" ({rewritten} rewritten)" if rewritten else " (all unchanged)"))
+    return paths
 
 
 def main(argv=None) -> int:
