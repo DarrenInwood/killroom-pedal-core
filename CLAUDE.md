@@ -26,6 +26,17 @@ pio test -e native
 The `native` env names its sources explicitly in `build_src_filter` ([platformio.ini](platformio.ini));
 a new `.cpp` that a suite needs has to be added there, or linked by donor-`#include` from the suite.
 
+**Run this once per clone:**
+
+```
+bash tools/install_hooks.sh
+```
+
+It points `core.hooksPath` at [.githooks/](.githooks/), whose `pre-push` runs the whole gate —
+the native suites, every `tools/**/test_*.py`, and the doc-link check — before anything leaves
+the machine. The board tests need `pcbnew` and are skipped, loudly, where no interpreter can
+import it; everything else still runs. `git push --no-verify` bypasses the lot.
+
 **The config guard is the trap.** Several modules open with
 
 ```cpp
