@@ -19,24 +19,10 @@
 #include <cstring>
 #include <cstdio>
 
-#include <pedal_core/hal.hpp>
-
-// --- Stub the SPI and hal pin calls display.cpp makes (no-ops). systick comes from the
-// shared systick_fake in test/support. ---------------------------------------
-namespace spi {
-    void write(const uint8_t*, uint16_t) {}
-    void transfer(const uint8_t*, uint8_t*, uint16_t) {}
-}
-namespace pedal_core::hal {
-    void display_pins_init() {}
-    void display_cs(bool) {}
-    void display_dc_data(bool) {}
-    void display_reset(bool) {}
-    void display_power(bool) {}
-}
-namespace systick {
-    void fake_set_ms(uint32_t ms);
-}
+// The hardware seam, shipped: the SPI and hal display-pin no-ops display.cpp reaches
+// through, and the settable clock its reset pulse and the frame pacing both read. The
+// multi-effect's screenshot generator stands the same stack up behind the same header.
+#include <pedal_core/host_display.hpp>
 
 #include "../../src/display.cpp"
 #include "../../src/ui/compositor.cpp"
@@ -118,7 +104,7 @@ static constexpr uint8_t page_of(uint8_t y) { return (uint8_t)(y / 8u); }
 
 // Both clocks move together: the producers stamp themselves from systick, and update() is
 // handed the same instant.
-static void at(uint32_t ms) { systick::fake_set_ms(ms); }
+static void at(uint32_t ms) { pedal_core::host_display::set_now_ms(ms); }
 
 // Bring a compositor up and put both clocks on `now`. The clock is set AFTER init()
 // because display::init() spends fake milliseconds on the controller's reset pulse, and a
@@ -531,6 +517,24 @@ void test_a_table_of_screens_each_draws_its_own(void) {
                                       "two states drew the same frame");
 }
 
+
+// The seam's own contract. display::init() spends time on the controller's reset pulse,
+// so a host program that pinned the clock at zero would freeze the splash and the save
+// animation on their first frame -- both timestamp themselves from here. This keeps the
+// header's warning true rather than merely written down.
+void test_the_shipped_clock_advances_over_the_reset_pulse(void) {
+    pedal_core::host_display::set_now_ms(0u);
+    TestCompositor c;
+    c.init();
+    TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
+        0u, pedal_core::host_display::now_ms(),
+        "display::init() spent no time: a host pinning the clock would freeze animations");
+
+    pedal_core::host_display::set_now_ms(1000u);
+    TEST_ASSERT_EQUAL_UINT32(1016u, pedal_core::host_display::advance_ms(16u));
+    TEST_ASSERT_EQUAL_UINT32(1016u, pedal_core::host_display::now_ms());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_a_state_change_reaches_the_framebuffer);
@@ -549,5 +553,6 @@ int main(int, char**) {
     RUN_TEST(test_pushing_an_unchanged_value_costs_no_redraw);
     RUN_TEST(test_names_differing_past_the_buffer_are_the_same_screen);
     RUN_TEST(test_a_table_of_screens_each_draws_its_own);
+    RUN_TEST(test_the_shipped_clock_advances_over_the_reset_pulse);
     return UNITY_END();
 }

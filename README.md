@@ -28,15 +28,19 @@ PlatformIO's library dependency finder picks it up from there via
 | `pedal_core/dfu_session.hpp` | pure header | The DFU write session — chunk decode, bounds checks, erase/write sequencing, image verify — with flash behind a three-function seam |
 | `pedal_core/app_image.hpp` | pure header | Boot-time application-image validation: descriptor magic, size, CRC32 trailer |
 | `pedal_core/dfu_progress.hpp` | pure header | Upload percentage and its display string |
+| `pedal_core/host_display.hpp` | pure header | The hardware seam, stubbed, for a host program compiling the display stack: SPI and pin no-ops, and a settable clock, so the shoot and the suites stand the same stack up the same way |
 | `pedal_core/frame_dump.hpp` | pure header | The screenshot container — captured display frames on their way to [tools/oled_png.py](tools/oled_png.py) |
 
 ## Screenshots of the UI
 
 A product documents its screens by generating them, not by drawing them. Build a
-host program that compiles the real `display.cpp` and the product's own
-compositor behind HAL no-ops — the idiom `test/test_display` already uses — drive
-it through the states worth picturing, and write each `display::capture()` out
-with [include/pedal_core/frame_dump.hpp](include/pedal_core/frame_dump.hpp). Then:
+host program that includes
+[include/pedal_core/host_display.hpp](include/pedal_core/host_display.hpp) — the
+hardware seam, stubbed, with the settable clock the splash and save animations
+timestamp themselves from — then compiles the real `display.cpp` and the
+product's own compositor behind it, drives it through the states worth
+picturing, and writes each `display::capture()` out with
+[include/pedal_core/frame_dump.hpp](include/pedal_core/frame_dump.hpp). Then:
 
 ```
 python tools/oled_png.py path/to/frames.bin --out docs/images/screens --sheet all_screens
