@@ -1,0 +1,37 @@
+//
+// !!! WARNING !!! AUTO-GENERATED FILE!
+// PLEASE DO NOT MODIFY IT AND USE "platformio.ini":
+// https://docs.platformio.org/page/projectconf/section_env_build.html#build-flags
+//
+{
+    "configurations": [
+        {
+            "name": "PlatformIO",
+            "includePath": [
+                "C:/Users/darre/Documents/killroom-pedal-core/src",
+                "C:/Users/darre/Documents/killroom-pedal-core/include",
+                "C:/Users/darre/Documents/killroom-pedal-core/test/support",
+                ""
+            ],
+            "browse": {
+                "limitSymbolsToIncludedHeaders": true,
+                "path": [
+                    "C:/Users/darre/Documents/killroom-pedal-core/src",
+                    "C:/Users/darre/Documents/killroom-pedal-core/include",
+                    "C:/Users/darre/Documents/killroom-pedal-core/test/support",
+                    ""
+                ]
+            },
+            "defines": [
+                "PLATFORMIO=60119",
+                ""
+            ],
+            "cppStandard": "c++17",
+            "compilerPath": "C:/Users/darre/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.MSVCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin/gcc.exe",
+            "compilerArgs": [
+                ""
+            ]
+        }
+    ],
+    "version": 4
+}
