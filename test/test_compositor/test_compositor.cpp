@@ -17,6 +17,7 @@
 #include <unity.h>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
 
 #include <pedal_core/hal.hpp>
 
@@ -53,6 +54,35 @@ public:
     uint8_t  last_screen_id = 0;
     uint8_t  splash_frames  = 0;
     uint32_t last_splash_elapsed = 0;
+
+    // The state the base is holding, read back through the same protected members a
+    // product hook reads. A field apply() dropped would otherwise be invisible where it
+    // draws nothing on the screen under test — the name cursor, for one.
+    ScreenState held() const
+    {
+        ScreenState s;
+        s.screen = m_screen;
+        s.focus  = m_focus;
+        s.preset = m_preset;
+        std::strncpy(s.preset_name,  m_preset_name,  sizeof(s.preset_name)  - 1);
+        std::strncpy(s.context_name, m_context_name, sizeof(s.context_name) - 1);
+        for (uint8_t i = 0; i < MAX_COLS; ++i) {
+            std::strncpy(s.param_name[i], m_param_name[i], sizeof(s.param_name[i]) - 1);
+            std::strncpy(s.param_val[i],  m_param_val[i],  sizeof(s.param_val[i])  - 1);
+            s.param_bar[i]    = m_param_bar[i];
+            s.param_pickup[i] = m_param_pickup[i];
+        }
+        s.page      = m_page;
+        s.num_pages = m_num_pages;
+        std::strncpy(s.function, m_function, sizeof(s.function) - 1);
+        for (uint8_t i = 0; i < 2u; ++i)
+            std::strncpy(s.switch_label[i], m_switch_label[i], sizeof(s.switch_label[i]) - 1);
+        s.name_cursor   = m_name_cursor;
+        s.save_prompt   = m_save_prompt;
+        s.status_badge  = m_status_badge;
+        s.scene_badge   = m_scene_badge;
+        return s;
+    }
 
 protected:
     void draw_screen(uint8_t screen_id) override
@@ -318,6 +348,189 @@ void test_a_slide_under_a_splash_is_refused(void) {
     TEST_ASSERT_FALSE(frames_match(splash, after));       // straight to the UI, no transition
 }
 
+
+// ---------------------------------------------------------------------------
+// The screen as one state
+// ---------------------------------------------------------------------------
+
+// Every field set to something that is not its default, so a field that fails to arrive
+// shows up as itself rather than as a coincidence.
+static Compositor::ScreenState sample_state(void) {
+    Compositor::ScreenState s;
+    s.focus  = Compositor::Focus::Preset;
+    s.preset = 42u;
+    std::strcpy(s.preset_name,  "Shimmer");
+    std::strcpy(s.context_name, "Chorus");
+    for (uint8_t i = 0; i < Compositor::MAX_COLS; ++i) {
+        std::snprintf(s.param_name[i], sizeof(s.param_name[i]), "Depth%u", (unsigned)i);
+        std::snprintf(s.param_val[i],  sizeof(s.param_val[i]),  "%u%%", (unsigned)(10u * i + 5u));
+        s.param_bar[i]    = (uint16_t)(100u * i + 50u);
+        s.param_pickup[i] = (uint16_t)(100u * i + 90u);
+    }
+    s.page = 1u; s.num_pages = 3u;
+    std::strcpy(s.function, "Tap Tempo");
+    std::strcpy(s.switch_label[0], "Bypass");
+    std::strcpy(s.switch_label[1], "Freeze");
+    s.name_cursor  = 2u;
+    s.save_prompt  = true;
+    s.status_badge = true;
+    s.scene_badge  = true;
+    return s;
+}
+
+static bool states_match(const Compositor::ScreenState& a, const Compositor::ScreenState& b) {
+    if (a.screen != b.screen || a.focus != b.focus || a.preset != b.preset) return false;
+    if (std::strcmp(a.preset_name, b.preset_name) != 0) return false;
+    if (std::strcmp(a.context_name, b.context_name) != 0) return false;
+    for (uint8_t i = 0; i < Compositor::MAX_COLS; ++i) {
+        if (std::strcmp(a.param_name[i], b.param_name[i]) != 0) return false;
+        if (std::strcmp(a.param_val[i],  b.param_val[i])  != 0) return false;
+        if (a.param_bar[i] != b.param_bar[i]) return false;
+        if (a.param_pickup[i] != b.param_pickup[i]) return false;
+    }
+    if (a.page != b.page || a.num_pages != b.num_pages) return false;
+    if (std::strcmp(a.function, b.function) != 0) return false;
+    for (uint8_t i = 0; i < 2u; ++i)
+        if (std::strcmp(a.switch_label[i], b.switch_label[i]) != 0) return false;
+    return a.name_cursor == b.name_cursor && a.save_prompt == b.save_prompt
+        && a.status_badge == b.status_badge && a.scene_badge == b.scene_badge;
+}
+
+// Push the same state the long way round, so the two ways in can be compared.
+static void push_by_setters(TestCompositor& c, const Compositor::ScreenState& s) {
+    c.set_screen(s.screen);
+    c.set_focus(s.focus);
+    c.set_preset(s.preset);
+    c.set_preset_name(s.preset_name);
+    c.set_context_name(s.context_name);
+    for (uint8_t i = 0; i < Compositor::MAX_COLS; ++i) {
+        c.set_param(i, s.param_name[i], s.param_val[i], s.param_bar[i]);
+        c.set_param_pickup(i, s.param_pickup[i]);
+    }
+    c.set_page(s.page, s.num_pages);
+    c.set_function_label(s.function);
+    c.set_switch_labels(s.switch_label[0], s.switch_label[1]);
+    c.set_name_cursor(s.name_cursor);
+    c.set_save_prompt(s.save_prompt);
+    c.set_status(s.status_badge);
+    c.set_scene(s.scene_badge);
+}
+
+// Every field arrives. A field apply() dropped would sit at its default here, including
+// the ones that draw nothing on the performance screen.
+void test_apply_carries_every_field(void) {
+    const Compositor::ScreenState st = sample_state();
+    TestCompositor c;
+    boot(c, 1000);
+    c.apply(st);
+    TEST_ASSERT_TRUE_MESSAGE(states_match(c.held(), st), "apply() dropped a field");
+}
+
+// The two ways in paint the same screen: one call or fourteen, the pixels are identical.
+void test_apply_paints_the_same_frame_as_the_setters(void) {
+    const Compositor::ScreenState st = sample_state();
+    Frame via_apply, via_setters;
+
+    { TestCompositor c; boot(c, 1000);
+      c.apply(st);
+      at(1010); c.update(1010); display::capture(via_apply); }
+
+    { TestCompositor c; boot(c, 1000);
+      push_by_setters(c, st);
+      at(1010); c.update(1010); display::capture(via_setters); }
+
+    TEST_ASSERT_TRUE(frames_match(via_apply, via_setters));
+}
+
+// A producer can push the same state every tick and pay for a redraw only when the
+// screen has something new to say.
+void test_applying_an_unchanged_state_costs_no_redraw(void) {
+    Compositor::ScreenState st = sample_state();
+    st.screen = 7u;                        // a product screen, so every draw is countable
+
+    TestCompositor c;
+    boot(c, 1000);
+    c.apply(st);
+    at(1010); c.update(1010);
+    TEST_ASSERT_EQUAL_UINT8(1, c.screens_drawn);
+
+    c.apply(st);                           // the same state again
+    at(1011); c.update(1011);              // inside the idle cap: only a change draws
+    TEST_ASSERT_EQUAL_UINT8(1, c.screens_drawn);
+
+    st.preset = 43u;                       // one field moves
+    c.apply(st);
+    at(1012); c.update(1012);
+    TEST_ASSERT_EQUAL_UINT8(2, c.screens_drawn);
+}
+
+// The same holds for the setters underneath, which is what stops apply() and the long
+// way round disagreeing about what a change is.
+void test_pushing_an_unchanged_value_costs_no_redraw(void) {
+    TestCompositor c;
+    boot(c, 1000);
+    c.set_screen(7u);
+    c.set_preset_name("Shimmer");
+    c.set_context_name("Chorus");
+    at(1010); c.update(1010);
+    TEST_ASSERT_EQUAL_UINT8(1, c.screens_drawn);
+
+    c.set_preset_name("Shimmer");          // the same words
+    c.set_context_name("Chorus");
+    c.set_preset(0u);                      // the same slot
+    c.set_page(0u, 1u);                    // the same page
+    c.set_param(0u, "P1", "--", Compositor::NO_BAR);   // what init() left there
+    at(1011); c.update(1011);
+    TEST_ASSERT_EQUAL_UINT8(1, c.screens_drawn);
+
+    c.set_preset_name("Other");            // and a real change still draws
+    at(1012); c.update(1012);
+    TEST_ASSERT_EQUAL_UINT8(2, c.screens_drawn);
+}
+
+// Two names that differ only past the end of the buffer draw the same pixels, so they
+// are the same screen and cost no redraw.
+void test_names_differing_past_the_buffer_are_the_same_screen(void) {
+    TestCompositor c;
+    boot(c, 1000);
+    c.set_screen(7u);
+    c.set_preset_name("SixteenCharsHere_ONE");   // truncated to sixteen
+    at(1010); c.update(1010);
+    TEST_ASSERT_EQUAL_UINT8(1, c.screens_drawn);
+
+    c.set_preset_name("SixteenCharsHere_TWO");   // same sixteen, different tail
+    at(1011); c.update(1011);
+    TEST_ASSERT_EQUAL_UINT8(1, c.screens_drawn);
+}
+
+// A table of screens, each drawing its own frame — the shape a suite takes once the
+// screen is a value rather than a script of calls.
+void test_a_table_of_screens_each_draws_its_own(void) {
+    Compositor::ScreenState table[4];
+    table[0] = sample_state();
+    table[1] = sample_state(); table[1].preset = 7u;
+                               std::strcpy(table[1].preset_name, "Second");
+    table[2] = sample_state(); table[2].status_badge = false;
+                               table[2].scene_badge  = false;
+    table[3] = sample_state(); table[3].focus = Compositor::Focus::Algo;
+                               table[3].page = 2u;
+
+    Frame frames[4];
+    for (uint8_t i = 0; i < 4u; ++i) {
+        TestCompositor c;
+        boot(c, 1000);
+        c.apply(table[i]);
+        at(1010); c.update(1010);
+        display::capture(frames[i]);
+        TEST_ASSERT_TRUE(frame_has_ink(frames[i]));
+    }
+
+    for (uint8_t i = 0; i < 4u; ++i)
+        for (uint8_t j = (uint8_t)(i + 1u); j < 4u; ++j)
+            TEST_ASSERT_FALSE_MESSAGE(frames_match(frames[i], frames[j]),
+                                      "two states drew the same frame");
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_a_state_change_reaches_the_framebuffer);
@@ -330,5 +543,11 @@ int main(int, char**) {
     RUN_TEST(test_the_save_animation_owns_the_screen);
     RUN_TEST(test_a_slide_settles_on_its_destination);
     RUN_TEST(test_a_slide_under_a_splash_is_refused);
+    RUN_TEST(test_apply_carries_every_field);
+    RUN_TEST(test_apply_paints_the_same_frame_as_the_setters);
+    RUN_TEST(test_applying_an_unchanged_state_costs_no_redraw);
+    RUN_TEST(test_pushing_an_unchanged_value_costs_no_redraw);
+    RUN_TEST(test_names_differing_past_the_buffer_are_the_same_screen);
+    RUN_TEST(test_a_table_of_screens_each_draws_its_own);
     return UNITY_END();
 }

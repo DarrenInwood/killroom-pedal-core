@@ -48,12 +48,56 @@ public:
 
     static constexpr uint8_t MAX_COLS = 4u;
 
+    // Longest label the context row and the switch row will hold, in characters: the
+    // longest name in the family's action vocabulary with a character to spare. Derived
+    // rather than written down, so an action whose name outgrows the row widens the row
+    // instead of being truncated silently — truncation reads on the pedal as a
+    // misspelling rather than as a layout problem.
+    static constexpr uint8_t FUNCTION_LABEL_MAX = (uint8_t)(action::LONGEST_NAME + 1u);
+
     explicit Compositor(const LayoutSpec& layout) : m_layout(layout) {}
 
     void init();
     void update(uint32_t now);
 
-    // --- state the producers push (each marks the frame dirty) --------------
+    // The performance screen as one value.
+    //
+    // Everything the fourteen setters below write, in one place, so a producer can say
+    // what the screen shows in a single call instead of learning an interface point per
+    // field — and so a field added here costs a caller nothing.
+    //
+    // This is what a producer hands over, not a second copy the compositor keeps: apply()
+    // diffs it against the state already held and the struct is the caller's, so the
+    // pedal spends no extra RAM on it.
+    struct ScreenState {
+        uint8_t  screen = SCREEN_NORMAL;
+        Focus    focus  = Focus::Pages;
+        uint16_t preset = 0;
+        char     preset_name[17]  = "";
+        char     context_name[20] = "";
+        char     param_name[MAX_COLS][20] = {};
+        char     param_val [MAX_COLS][16] = {};
+        uint16_t param_bar [MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
+        uint16_t param_pickup[MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
+        uint8_t  page = 0, num_pages = 1;
+        char     function[FUNCTION_LABEL_MAX + 1u] = "";
+        char     switch_label[2][FUNCTION_LABEL_MAX + 1u] = {};
+        uint8_t  name_cursor = 0;
+        bool     save_prompt = false;
+        bool     status_badge = false;
+        bool     scene_badge  = false;
+    };
+
+    // Say what the screen shows, whole. Each field is compared against what is already
+    // held and the frame is marked dirty only where something a pixel depends on actually
+    // moved, so a producer can push the same state every tick and pay for a redraw only
+    // when the screen has something new to say.
+    //
+    // It runs through the setters below rather than beside them, so there is one place
+    // per field that decides what a change is and the two ways in cannot drift.
+    virtual void apply(const ScreenState& s);
+
+    // --- state the producers push (each marks the frame dirty where it moves) ---
     virtual void set_context_name(const char* name);   // the algorithm's name
     virtual void set_preset(uint16_t slot);
     virtual void set_preset_name(const char* name);
@@ -71,11 +115,6 @@ public:
     // the context row. Empty gives the row back to the page indicator — the two share the
     // space because they are never both worth saying: a page number means nothing where the
     // knobs are not walking pages, and the switch's job is the thing a foot needs to know.
-    // Longest label the row will hold, in characters: the longest name in the family's
-    // action vocabulary with a character to spare. Derived rather than written down, so
-    // an action whose name outgrows the row widens the row instead of being truncated
-    // silently — truncation reads as a misspelling rather than as a layout problem.
-    static constexpr uint8_t FUNCTION_LABEL_MAX = (uint8_t)(action::LONGEST_NAME + 1u);
     virtual void set_function_label(const char* label);
     // What the two footswitches do right now, along the bottom edge: the first at the
     // left and the second at the right, each over the switch it names. A product that
@@ -136,6 +175,11 @@ protected:
     static void fit(const display::Font& f, const char* src, uint8_t max_px,
                     char* dst, uint8_t dstsz);
     static void to_display(char* dst, const char* src, uint8_t maxlen, bool strip_spaces);
+
+    // Copy `src` into `dst`, truncated to its capacity, and say whether the stored text
+    // moved. The comparison is against the truncated form, so two names that differ only
+    // past the end of the buffer are the same screen and cost no redraw.
+    static bool assign(char* dst, uint16_t cap, const char* src);
     static uint8_t page_widget_width();
     void draw_title(const char* title, bool with_page = false);
     void draw_name_page();               // the family name editor (Edit Name screen)
