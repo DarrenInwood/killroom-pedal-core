@@ -58,6 +58,10 @@ namespace midi_handler {
         bool        tx_params  = true;   // the pedal's own CC / NRPN echo leaves the pedal
     };
 
+    // Bring the module to a known state and set the receive channel: the settings return
+    // to their defaults, both parsers forget a half-received message, the DIN Out router
+    // drops any lock, queue and status it was holding, and the SysEx commands rx_sysex
+    // never blocks are cleared. Call once at boot, before naming those commands.
     void init(uint8_t channel, bool omni);
     void update();   // drain both transports; call every superloop wake
 
@@ -72,11 +76,11 @@ namespace midi_handler {
 
     // --- the DIN Out router ---------------------------------------------------
     //
-    // Everything bound for the DIN jack goes through here so that two streams
-    // (an inbound echo and the pedal's own traffic) cannot splice into each
-    // other. The rule is the MIDI spec's: only System Real-Time bytes may appear
-    // inside another message, so they are written straight through and every
-    // other message is emitted whole.
+    // Everything bound for the DIN jack goes through one arbiter, so two streams cannot
+    // splice into each other. What it does with them -- the lock, the queue, the
+    // running-status hold, the stall timeout and the policy saying which source reaches
+    // which jack -- is <pedal_core/din_router.hpp>'s, described there. The two functions
+    // below are what a product hands it.
 
     // One complete message the pedal originated (3-byte channel message, or a
     // whole F0..F7 frame). Dropped when out_mode does not carry the pedal's own
