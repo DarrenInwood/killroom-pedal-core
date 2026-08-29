@@ -431,10 +431,11 @@ void Compositor::draw_focus_panel(uint16_t prog)
     }
 
     // The knob that popped this panel is still waiting to be picked up: the same tick the
-    // grid draws, over the panel's wider track. It waits for the blind to clear both of
-    // its rows -- like the text, and unlike the gauge, which grows out from under the edge
-    // -- so the mark and the bar it is read against arrive together.
-    if (m_panel_pickup != NO_BAR && bottom >= PANEL_PICKUP_Y + PICKUP_H)
+    // grid draws, over the panel's wider track. It waits on the gauge's own condition, not
+    // on its own two rows: the gauge grows out from under the blind and so reaches the
+    // screen later than the rows above it, and a mark that means "how much further to
+    // turn" says nothing without the bar it is measured against.
+    if (m_panel_pickup != NO_BAR && bottom >= PANEL_GAUGE_Y + 3u)
         draw_pickup_tick(4, (uint8_t)(OLED_WIDTH - 8u), PANEL_PICKUP_Y, m_panel_pickup);
 
     // Below 3px the outline swallows the fill and the gauge reads as a plain line.
