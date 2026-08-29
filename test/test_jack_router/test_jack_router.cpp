@@ -1,6 +1,6 @@
-// Host-native unit tests for the DIN Out router (include/pedal_core/din_router.hpp).
+// Host-native unit tests for the MIDI Out router (include/pedal_core/jack_router.hpp).
 //
-// The router arbitrates the DIN Out jack between the three things that want it: the
+// The router arbitrates the MIDI Out jack between the three things that want it: the
 // inbound stream being echoed, the other transport being cross-routed, and the pedal's
 // own traffic. Only System Real-Time bytes may appear inside another message, so
 // everything else has to leave the jack whole -- a message contending with a frame
@@ -21,28 +21,28 @@ namespace uart {
     void write(uint8_t b) { g_wire.push_back(b); }
 }
 
-#include <pedal_core/din_router.hpp>
+#include <pedal_core/jack_router.hpp>
 
-using pedal_core::DinRouter;
-using Src = DinRouter::Src;
+using pedal_core::JackRouter;
+using Src = JackRouter::Src;
 using midi_handler::Config;
 using midi_handler::OutMode;
-using midi_handler::UsbDinRoute;
+using midi_handler::UsbJackRoute;
 
-static DinRouter* g_r = nullptr;
+static JackRouter* g_r = nullptr;
 
 void setUp(void) {
     uart::g_wire.clear();
-    g_r = new DinRouter();
+    g_r = new JackRouter();
 }
 void tearDown(void) { delete g_r; g_r = nullptr; }
 
 // --- helpers ----------------------------------------------------------------
 
-static void configure(OutMode out, UsbDinRoute cross = UsbDinRoute::Off, bool clock_thru = true) {
+static void configure(OutMode out, UsbJackRoute cross = UsbJackRoute::Off, bool clock_thru = true) {
     Config c;
     c.out_mode   = out;
-    c.usb_din    = cross;
+    c.usb_jack    = cross;
     c.clock_thru = clock_thru;
     g_r->set_config(c);
 }
@@ -68,8 +68,8 @@ static bool wire_is(std::vector<uint8_t> expected) {
 void test_an_inbound_stream_is_echoed_on_merge_and_thru(void) {
     const OutMode carries[]     = { OutMode::Merge, OutMode::Thru };
     const OutMode carries_not[] = { OutMode::Out,   OutMode::Off  };
-    for (OutMode m : carries)     { configure(m); TEST_ASSERT_TRUE(g_r->carries(Src::Uart)); }
-    for (OutMode m : carries_not) { configure(m); TEST_ASSERT_FALSE(g_r->carries(Src::Uart)); }
+    for (OutMode m : carries)     { configure(m); TEST_ASSERT_TRUE(g_r->carries(Src::Jack)); }
+    for (OutMode m : carries_not) { configure(m); TEST_ASSERT_FALSE(g_r->carries(Src::Jack)); }
 }
 
 // The pedal's own traffic leaves on Merge and Out, and not on Thru or Off.
@@ -80,31 +80,31 @@ void test_the_pedals_own_traffic_leaves_on_merge_and_out(void) {
     for (OutMode m : carries_not) { configure(m); TEST_ASSERT_FALSE(g_r->carries(Src::Self)); }
 }
 
-// USB reaches the DIN jack only where the echo is on AND the cross-route points that way.
-void test_usb_reaches_din_only_when_both_switches_agree(void) {
-    configure(OutMode::Merge, UsbDinRoute::UsbToDin);
+// USB reaches the MIDI jack only where the echo is on AND the cross-route points that way.
+void test_usb_reaches_the_jack_only_when_both_switches_agree(void) {
+    configure(OutMode::Merge, UsbJackRoute::UsbToJack);
     TEST_ASSERT_TRUE(g_r->carries(Src::Usb));
-    configure(OutMode::Merge, UsbDinRoute::Both);
+    configure(OutMode::Merge, UsbJackRoute::Both);
     TEST_ASSERT_TRUE(g_r->carries(Src::Usb));
 
-    configure(OutMode::Merge, UsbDinRoute::Off);
+    configure(OutMode::Merge, UsbJackRoute::Off);
     TEST_ASSERT_FALSE(g_r->carries(Src::Usb));      // echo on, cross-route off
-    configure(OutMode::Merge, UsbDinRoute::DinToUsb);
+    configure(OutMode::Merge, UsbJackRoute::JackToUsb);
     TEST_ASSERT_FALSE(g_r->carries(Src::Usb));      // pointing the other way
-    configure(OutMode::Out, UsbDinRoute::UsbToDin);
+    configure(OutMode::Out, UsbJackRoute::UsbToJack);
     TEST_ASSERT_FALSE(g_r->carries(Src::Usb));      // cross-route on, echo off
 }
 
-// DIN reaches USB only on the cross-routes that point that way, whatever the jack does.
-void test_din_reaches_usb_only_on_the_cross_routes_that_point_that_way(void) {
-    configure(OutMode::Off, UsbDinRoute::DinToUsb);
-    TEST_ASSERT_TRUE(g_r->usb_carries(Src::Uart));  // the DIN jack being silent is irrelevant
-    configure(OutMode::Merge, UsbDinRoute::Both);
-    TEST_ASSERT_TRUE(g_r->usb_carries(Src::Uart));
+// The jack reaches USB only on the cross-routes that point that way, whatever the jack does.
+void test_the_jack_reaches_usb_only_on_the_cross_routes_that_point_that_way(void) {
+    configure(OutMode::Off, UsbJackRoute::JackToUsb);
+    TEST_ASSERT_TRUE(g_r->usb_carries(Src::Jack));  // the MIDI jack being silent is irrelevant
+    configure(OutMode::Merge, UsbJackRoute::Both);
+    TEST_ASSERT_TRUE(g_r->usb_carries(Src::Jack));
 
-    configure(OutMode::Merge, UsbDinRoute::UsbToDin);
-    TEST_ASSERT_FALSE(g_r->usb_carries(Src::Uart));
-    configure(OutMode::Merge, UsbDinRoute::Both);
+    configure(OutMode::Merge, UsbJackRoute::UsbToJack);
+    TEST_ASSERT_FALSE(g_r->usb_carries(Src::Jack));
+    configure(OutMode::Merge, UsbJackRoute::Both);
     TEST_ASSERT_FALSE(g_r->usb_carries(Src::Usb));  // USB does not echo to itself
     TEST_ASSERT_FALSE(g_r->usb_carries(Src::Self));
 }
@@ -115,7 +115,7 @@ void test_din_reaches_usb_only_on_the_cross_routes_that_point_that_way(void) {
 void test_active_sensing_is_dropped_on_every_setting(void) {
     for (OutMode m : { OutMode::Merge, OutMode::Thru, OutMode::Out, OutMode::Off }) {
         configure(m);
-        TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Uart, 0xFEu));
+        TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Jack, 0xFEu));
     }
 }
 
@@ -123,31 +123,31 @@ void test_active_sensing_is_dropped_on_every_setting(void) {
 // below it while still listening to a clock above.
 void test_the_clock_family_rides_the_clock_thru_switch(void) {
     for (uint8_t status : { 0xF8u, 0xFAu, 0xFBu, 0xFCu }) {
-        configure(OutMode::Merge, UsbDinRoute::Off, /*clock_thru=*/true);
-        TEST_ASSERT_TRUE(g_r->carries_realtime(Src::Uart, status));
-        configure(OutMode::Merge, UsbDinRoute::Off, /*clock_thru=*/false);
-        TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Uart, status));
+        configure(OutMode::Merge, UsbJackRoute::Off, /*clock_thru=*/true);
+        TEST_ASSERT_TRUE(g_r->carries_realtime(Src::Jack, status));
+        configure(OutMode::Merge, UsbJackRoute::Off, /*clock_thru=*/false);
+        TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Jack, status));
     }
 }
 
 // While the pedal generates its own clock the inbound one is dropped whatever that
 // switch says: two clocks on one wire read as neither.
 void test_a_generated_clock_suppresses_the_inbound_one(void) {
-    configure(OutMode::Merge, UsbDinRoute::Off, /*clock_thru=*/true);
+    configure(OutMode::Merge, UsbJackRoute::Off, /*clock_thru=*/true);
     g_r->set_generating_clock(true);
     for (uint8_t status : { 0xF8u, 0xFAu, 0xFBu, 0xFCu })
-        TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Uart, status));
+        TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Jack, status));
 
     // And the rest of System Real-Time is unaffected by it.
-    TEST_ASSERT_TRUE(g_r->carries_realtime(Src::Uart, 0xFFu));
+    TEST_ASSERT_TRUE(g_r->carries_realtime(Src::Jack, 0xFFu));
 }
 
 // System Reset is a panic message; it travels with the echo.
 void test_system_reset_travels_with_the_echo(void) {
-    configure(OutMode::Merge); TEST_ASSERT_TRUE(g_r->carries_realtime(Src::Uart, 0xFFu));
-    configure(OutMode::Thru);  TEST_ASSERT_TRUE(g_r->carries_realtime(Src::Uart, 0xFFu));
-    configure(OutMode::Out);   TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Uart, 0xFFu));
-    configure(OutMode::Off);   TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Uart, 0xFFu));
+    configure(OutMode::Merge); TEST_ASSERT_TRUE(g_r->carries_realtime(Src::Jack, 0xFFu));
+    configure(OutMode::Thru);  TEST_ASSERT_TRUE(g_r->carries_realtime(Src::Jack, 0xFFu));
+    configure(OutMode::Out);   TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Jack, 0xFFu));
+    configure(OutMode::Off);   TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Jack, 0xFFu));
 }
 
 // ---------------------------------------------------------------------------
@@ -156,11 +156,11 @@ void test_system_reset_travels_with_the_echo(void) {
 
 void test_a_message_the_policy_refuses_never_reaches_the_jack(void) {
     configure(OutMode::Out);                        // no inbound echo
-    send(Src::Uart, {0x90, 0x40, 0x7F});
+    send(Src::Jack, {0x90, 0x40, 0x7F});
     TEST_ASSERT_TRUE(uart::g_wire.empty());
 
     configure(OutMode::Merge);
-    send(Src::Uart, {0x90, 0x40, 0x7F});
+    send(Src::Jack, {0x90, 0x40, 0x7F});
     TEST_ASSERT_TRUE(wire_is({0x90, 0x40, 0x7F}));
 }
 
@@ -168,37 +168,37 @@ void test_a_message_the_policy_refuses_never_reaches_the_jack(void) {
 // point rather than asked of the predicate: it is the subtlest column of the table, and a
 // rule covered only where it is stated is a rule nothing proves is consulted.
 void test_usb_traffic_reaches_the_jack_only_where_the_cross_route_says(void) {
-    configure(OutMode::Merge, UsbDinRoute::UsbToDin);
+    configure(OutMode::Merge, UsbJackRoute::UsbToJack);
     send(Src::Usb, {0x90, 0x40, 0x7F});
     TEST_ASSERT_TRUE(wire_is({0x90, 0x40, 0x7F}));
 
     uart::g_wire.clear();
-    configure(OutMode::Merge, UsbDinRoute::Both);
+    configure(OutMode::Merge, UsbJackRoute::Both);
     send(Src::Usb, {0x90, 0x40, 0x7F});
     TEST_ASSERT_TRUE(wire_is({0x90, 0x40, 0x7F}));
 
     uart::g_wire.clear();
-    configure(OutMode::Merge, UsbDinRoute::Off);       // echo on, cross-route off
+    configure(OutMode::Merge, UsbJackRoute::Off);       // echo on, cross-route off
     send(Src::Usb, {0x90, 0x40, 0x7F});
     TEST_ASSERT_TRUE(uart::g_wire.empty());
 
-    configure(OutMode::Merge, UsbDinRoute::DinToUsb);  // pointing the other way
+    configure(OutMode::Merge, UsbJackRoute::JackToUsb);  // pointing the other way
     send(Src::Usb, {0x90, 0x40, 0x7F});
     TEST_ASSERT_TRUE(uart::g_wire.empty());
 
-    configure(OutMode::Out, UsbDinRoute::UsbToDin);    // cross-route on, echo off
+    configure(OutMode::Out, UsbJackRoute::UsbToJack);    // cross-route on, echo off
     send(Src::Usb, {0x90, 0x40, 0x7F});
     TEST_ASSERT_TRUE(uart::g_wire.empty());
 }
 
 // The same for a real-time byte arriving on USB.
 void test_a_usb_realtime_byte_obeys_the_cross_route(void) {
-    configure(OutMode::Merge, UsbDinRoute::UsbToDin);
+    configure(OutMode::Merge, UsbJackRoute::UsbToJack);
     g_r->realtime(Src::Usb, 0xFFu);
     TEST_ASSERT_TRUE(wire_is({0xFF}));
 
     uart::g_wire.clear();
-    configure(OutMode::Merge, UsbDinRoute::Off);
+    configure(OutMode::Merge, UsbJackRoute::Off);
     g_r->realtime(Src::Usb, 0xFFu);
     TEST_ASSERT_TRUE(uart::g_wire.empty());
 }
@@ -206,13 +206,13 @@ void test_a_usb_realtime_byte_obeys_the_cross_route(void) {
 // Two clocks on one wire read as neither, so while the pedal generates one the inbound
 // clock is dropped -- driven through realtime(), not merely asked of the predicate.
 void test_an_inbound_clock_is_dropped_while_the_pedal_generates(void) {
-    configure(OutMode::Merge, UsbDinRoute::Off, /*clock_thru=*/true);
-    g_r->realtime(Src::Uart, 0xF8u);
+    configure(OutMode::Merge, UsbJackRoute::Off, /*clock_thru=*/true);
+    g_r->realtime(Src::Jack, 0xF8u);
     TEST_ASSERT_TRUE(wire_is({0xF8}));                 // forwarded while not generating
 
     uart::g_wire.clear();
     g_r->set_generating_clock(true);
-    g_r->realtime(Src::Uart, 0xF8u);
+    g_r->realtime(Src::Jack, 0xF8u);
     TEST_ASSERT_TRUE_MESSAGE(uart::g_wire.empty(),
                              "an inbound clock was forwarded while the pedal generates one");
 
@@ -222,12 +222,12 @@ void test_an_inbound_clock_is_dropped_while_the_pedal_generates(void) {
 }
 
 void test_a_realtime_byte_the_policy_refuses_never_reaches_the_jack(void) {
-    configure(OutMode::Merge, UsbDinRoute::Off, /*clock_thru=*/false);
-    g_r->realtime(Src::Uart, 0xF8u);                // clock, with thru off
-    g_r->realtime(Src::Uart, 0xFEu);                // active sensing, always dropped
+    configure(OutMode::Merge, UsbJackRoute::Off, /*clock_thru=*/false);
+    g_r->realtime(Src::Jack, 0xF8u);                // clock, with thru off
+    g_r->realtime(Src::Jack, 0xFEu);                // active sensing, always dropped
     TEST_ASSERT_TRUE(uart::g_wire.empty());
 
-    g_r->realtime(Src::Uart, 0xFFu);                // system reset travels
+    g_r->realtime(Src::Jack, 0xFFu);                // system reset travels
     TEST_ASSERT_TRUE(wire_is({0xFF}));
 }
 
@@ -235,7 +235,7 @@ void test_a_realtime_byte_the_policy_refuses_never_reaches_the_jack(void) {
 // carries the pedal's traffic at all -- not by clock_thru, and not suppressed by the
 // pedal being the one generating.
 void test_the_pedals_own_clock_is_not_judged_as_an_echo(void) {
-    configure(OutMode::Out, UsbDinRoute::Off, /*clock_thru=*/false);
+    configure(OutMode::Out, UsbJackRoute::Off, /*clock_thru=*/false);
     g_r->set_generating_clock(true);
     g_r->realtime(Src::Self, 0xF8u);
     TEST_ASSERT_TRUE_MESSAGE(wire_is({0xF8}),
@@ -256,25 +256,25 @@ void test_the_pedals_own_clock_is_not_judged_as_an_echo(void) {
 // arriving cannot be sustained at all.
 void test_running_status_is_held_across_messages(void) {
     configure(OutMode::Merge);
-    send(Src::Uart, {0xB0, 0x07, 0x40});
-    send(Src::Uart, {0xB0, 0x07, 0x41});
-    send(Src::Uart, {0xB0, 0x07, 0x42});
+    send(Src::Jack, {0xB0, 0x07, 0x40});
+    send(Src::Jack, {0xB0, 0x07, 0x41});
+    send(Src::Jack, {0xB0, 0x07, 0x42});
     TEST_ASSERT_TRUE(wire_is({0xB0, 0x07, 0x40, 0x07, 0x41, 0x07, 0x42}));
 }
 
 void test_a_new_status_breaks_the_run(void) {
     configure(OutMode::Merge);
-    send(Src::Uart, {0xB0, 0x07, 0x40});
-    send(Src::Uart, {0x90, 0x40, 0x7F});
+    send(Src::Jack, {0xB0, 0x07, 0x40});
+    send(Src::Jack, {0x90, 0x40, 0x7F});
     TEST_ASSERT_TRUE(wire_is({0xB0, 0x07, 0x40, 0x90, 0x40, 0x7F}));
 }
 
 // System Common breaks the run; the spec says so.
 void test_system_common_breaks_the_run(void) {
     configure(OutMode::Merge);
-    send(Src::Uart, {0xB0, 0x07, 0x40});
-    send(Src::Uart, {0xF2, 0x00, 0x10});            // song position
-    send(Src::Uart, {0xB0, 0x07, 0x41});
+    send(Src::Jack, {0xB0, 0x07, 0x40});
+    send(Src::Jack, {0xF2, 0x00, 0x10});            // song position
+    send(Src::Jack, {0xB0, 0x07, 0x41});
     TEST_ASSERT_TRUE(wire_is({0xB0, 0x07, 0x40, 0xF2, 0x00, 0x10, 0xB0, 0x07, 0x41}));
 }
 
@@ -282,9 +282,9 @@ void test_system_common_breaks_the_run(void) {
 // have been told nothing, so the next message re-states its status.
 void test_a_routing_change_forgets_the_status_on_the_wire(void) {
     configure(OutMode::Merge);
-    send(Src::Uart, {0xB0, 0x07, 0x40});
+    send(Src::Jack, {0xB0, 0x07, 0x40});
     configure(OutMode::Merge);                      // any set_config, same values
-    send(Src::Uart, {0xB0, 0x07, 0x41});
+    send(Src::Jack, {0xB0, 0x07, 0x41});
     TEST_ASSERT_TRUE(wire_is({0xB0, 0x07, 0x40, 0xB0, 0x07, 0x41}));
 }
 
@@ -296,7 +296,7 @@ void test_a_routing_change_forgets_the_status_on_the_wire(void) {
 // it streams rather than buffers -- and holds the jack while it does.
 void test_a_streaming_frame_holds_the_jack(void) {
     configure(OutMode::Merge);
-    TEST_ASSERT_TRUE(g_r->sysex_begin(Src::Uart, 1000u));
+    TEST_ASSERT_TRUE(g_r->sysex_begin(Src::Jack, 1000u));
     g_r->sysex_byte(0xF0u, 1000u);
     g_r->sysex_byte(0x7Du, 1001u);
 
@@ -304,42 +304,42 @@ void test_a_streaming_frame_holds_the_jack(void) {
     send(Src::Self, {0xB0, 0x07, 0x40});
     TEST_ASSERT_TRUE(wire_is({0xF0, 0x7D}));
 
-    g_r->sysex_end(Src::Uart, /*write_eox=*/true);
+    g_r->sysex_end(Src::Jack, /*write_eox=*/true);
     TEST_ASSERT_TRUE(wire_is({0xF0, 0x7D, 0xF7, 0xB0, 0x07, 0x40}));
 }
 
 // A second frame arriving mid-stream is refused outright: the jack cannot carry both,
 // and 31250 baud could not fit them anyway.
 void test_a_second_frame_is_refused_while_one_streams(void) {
-    configure(OutMode::Merge, UsbDinRoute::UsbToDin);
-    TEST_ASSERT_TRUE(g_r->sysex_begin(Src::Uart, 1000u));
+    configure(OutMode::Merge, UsbJackRoute::UsbToJack);
+    TEST_ASSERT_TRUE(g_r->sysex_begin(Src::Jack, 1000u));
     TEST_ASSERT_FALSE(g_r->sysex_begin(Src::Usb, 1000u));
 
-    g_r->sysex_end(Src::Uart, true);
+    g_r->sysex_end(Src::Jack, true);
     TEST_ASSERT_TRUE(g_r->sysex_begin(Src::Usb, 1002u));   // the jack is free again
 }
 
 // Only the owner can end the frame it started.
 void test_only_the_owner_ends_the_frame(void) {
-    configure(OutMode::Merge, UsbDinRoute::UsbToDin);
-    g_r->sysex_begin(Src::Uart, 1000u);
+    configure(OutMode::Merge, UsbJackRoute::UsbToJack);
+    g_r->sysex_begin(Src::Jack, 1000u);
     g_r->sysex_byte(0xF0u, 1000u);
 
     g_r->sysex_end(Src::Usb, true);          // not the owner: ignored
     send(Src::Self, {0xB0, 0x07, 0x40});
     TEST_ASSERT_TRUE(wire_is({0xF0}));              // still locked, still queued
 
-    g_r->sysex_end(Src::Uart, true);
+    g_r->sysex_end(Src::Jack, true);
     TEST_ASSERT_TRUE(wire_is({0xF0, 0xF7, 0xB0, 0x07, 0x40}));
 }
 
 // Queued messages leave in the order they arrived, each one whole.
 void test_the_queue_drains_in_order(void) {
     configure(OutMode::Merge);
-    g_r->sysex_begin(Src::Uart, 1000u);
+    g_r->sysex_begin(Src::Jack, 1000u);
     send(Src::Self, {0x90, 0x40, 0x7F});
     send(Src::Self, {0x80, 0x40, 0x00});
-    g_r->sysex_end(Src::Uart, false);
+    g_r->sysex_end(Src::Jack, false);
     TEST_ASSERT_TRUE(wire_is({0x90, 0x40, 0x7F, 0x80, 0x40, 0x00}));
 }
 
@@ -347,9 +347,9 @@ void test_the_queue_drains_in_order(void) {
 // pass the lock untouched rather than queueing behind it.
 void test_realtime_passes_the_lock_untouched(void) {
     configure(OutMode::Merge);
-    g_r->sysex_begin(Src::Uart, 1000u);
+    g_r->sysex_begin(Src::Jack, 1000u);
     g_r->sysex_byte(0xF0u, 1000u);
-    g_r->realtime(Src::Uart, 0xF8u);                // a clock, mid-frame
+    g_r->realtime(Src::Jack, 0xF8u);                // a clock, mid-frame
     g_r->sysex_byte(0x7Du, 1001u);
     TEST_ASSERT_TRUE(wire_is({0xF0, 0xF8, 0x7D}));
 }
@@ -358,7 +358,7 @@ void test_realtime_passes_the_lock_untouched(void) {
 // downstream is worse than none.
 void test_a_message_too_large_for_the_queue_is_dropped_whole(void) {
     configure(OutMode::Merge);
-    g_r->sysex_begin(Src::Uart, 1000u);
+    g_r->sysex_begin(Src::Jack, 1000u);
 
     // Offer far more than the queue can hold. The status alternates so running status
     // never applies: with every message re-stating its status, each one that survives is
@@ -368,7 +368,7 @@ void test_a_message_too_large_for_the_queue_is_dropped_whole(void) {
     const uint16_t offered = 200u;
     for (uint16_t i = 0; i < offered; ++i)
         send(Src::Self, {(uint8_t)((i & 1u) ? 0x90u : 0xB0u), 0x07u, (uint8_t)(i & 0x7Fu)});
-    g_r->sysex_end(Src::Uart, false);
+    g_r->sysex_end(Src::Jack, false);
 
     // What got through is whole messages and nothing partial, and the overflow was
     // dropped rather than truncated onto the wire.
@@ -388,12 +388,12 @@ void test_a_message_too_large_for_the_queue_is_dropped_whole(void) {
 // The stall timeout
 // ---------------------------------------------------------------------------
 
-// A DIN sender pushes bytes 320 us apart and a host's packets are far closer together
+// A jack sender pushes bytes 320 us apart and a host's packets are far closer together
 // than the timeout, so only a frame that has stopped coming trips it -- an unplugged
 // cable mid-dump being the case that matters.
 void test_a_frame_that_stops_coming_gives_the_jack_back(void) {
     configure(OutMode::Merge);
-    g_r->sysex_begin(Src::Uart, 1000u);
+    g_r->sysex_begin(Src::Jack, 1000u);
     g_r->sysex_byte(0xF0u, 1000u);
     send(Src::Self, {0xB0, 0x07, 0x40});            // waiting behind the frame
 
@@ -402,7 +402,7 @@ void test_a_frame_that_stops_coming_gives_the_jack_back(void) {
     TEST_ASSERT_TRUE(g_r->stalled(2000u));          // a second of silence
 
     TEST_ASSERT_TRUE(g_r->poll(2000u, owner));
-    TEST_ASSERT_EQUAL_INT_MESSAGE((int)Src::Uart, (int)owner,
+    TEST_ASSERT_EQUAL_INT_MESSAGE((int)Src::Jack, (int)owner,
                                   "poll did not name the stream that stalled");
 
     // The forwarded copy is closed so the downstream parser is not left holding a frame
@@ -417,7 +417,7 @@ void test_a_frame_that_stops_coming_gives_the_jack_back(void) {
 // Every byte says the frame is alive, so a slow but live sender never trips it.
 void test_a_live_frame_never_stalls(void) {
     configure(OutMode::Merge);
-    g_r->sysex_begin(Src::Uart, 1000u);
+    g_r->sysex_begin(Src::Jack, 1000u);
     for (uint32_t t = 1000u; t < 5000u; t += 500u) {
         g_r->sysex_byte(0x00u, t);
         TEST_ASSERT_FALSE(g_r->stalled(t + 499u));
@@ -433,9 +433,9 @@ void test_an_idle_jack_does_not_stall(void) {
 // poll() names the stream whose frame stalled, because the caller has a parser of its own
 // to stop forwarding from -- and that is its state rather than the jack's.
 void test_poll_names_the_stream_whose_frame_stalled(void) {
-    configure(OutMode::Merge, UsbDinRoute::UsbToDin);
+    configure(OutMode::Merge, UsbJackRoute::UsbToJack);
     g_r->sysex_begin(Src::Usb, 1000u);
-    Src owner = Src::Uart;
+    Src owner = Src::Jack;
     TEST_ASSERT_TRUE(g_r->poll(2000u, owner));
     TEST_ASSERT_EQUAL_INT((int)Src::Usb, (int)owner);
 }
@@ -443,17 +443,17 @@ void test_poll_names_the_stream_whose_frame_stalled(void) {
 // A fresh router holds nothing: no lock, no queue, no status on the wire.
 void test_a_fresh_router_holds_nothing(void) {
     configure(OutMode::Merge);
-    send(Src::Uart, {0xB0, 0x07, 0x40});
+    send(Src::Jack, {0xB0, 0x07, 0x40});
 
-    DinRouter fresh;
+    JackRouter fresh;
     uart::g_wire.clear();
     Config c; c.out_mode = OutMode::Merge;
     fresh.set_config(c);
     const uint8_t msg[3] = { 0xB0u, 0x07u, 0x41u };
-    fresh.message(Src::Uart, msg, 3u);
+    fresh.message(Src::Jack, msg, 3u);
     TEST_ASSERT_TRUE_MESSAGE(wire_is({0xB0, 0x07, 0x41}),
                              "a fresh router inherited a status byte from another");
-    Src owner = Src::Uart;
+    Src owner = Src::Jack;
     TEST_ASSERT_FALSE(fresh.poll(100000u, owner));
 }
 
@@ -462,8 +462,8 @@ int main(int, char**)
     UNITY_BEGIN();
     RUN_TEST(test_an_inbound_stream_is_echoed_on_merge_and_thru);
     RUN_TEST(test_the_pedals_own_traffic_leaves_on_merge_and_out);
-    RUN_TEST(test_usb_reaches_din_only_when_both_switches_agree);
-    RUN_TEST(test_din_reaches_usb_only_on_the_cross_routes_that_point_that_way);
+    RUN_TEST(test_usb_reaches_the_jack_only_when_both_switches_agree);
+    RUN_TEST(test_the_jack_reaches_usb_only_on_the_cross_routes_that_point_that_way);
     RUN_TEST(test_active_sensing_is_dropped_on_every_setting);
     RUN_TEST(test_the_clock_family_rides_the_clock_thru_switch);
     RUN_TEST(test_a_generated_clock_suppresses_the_inbound_one);

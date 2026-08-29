@@ -8,7 +8,7 @@ using pedal_core::MidiResponderBase;
 
 namespace {
 
-// One channel message onto both transports. USB takes it as a packet; DIN goes
+// One channel message onto both transports. USB takes it as a packet; the jack goes
 // through the router, which decides whether the jack carries the pedal's own
 // traffic and keeps the message whole against an inbound frame in flight.
 void send_msg(uint8_t status, uint8_t d0, uint8_t d1)

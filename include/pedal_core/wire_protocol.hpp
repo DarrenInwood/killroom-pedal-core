@@ -179,7 +179,7 @@ inline constexpr uint8_t SCENE_ACTIVE = 0x15u;
 // the pedal's to clamp, not the host's to assume.
 namespace midi_routing {
 
-// What the DIN Out jack carries.
+// What the MIDI Out jack carries.
 namespace out_mode {
 inline constexpr uint8_t MERGE = 0u;  // inbound echo plus the pedal's own messages
 inline constexpr uint8_t THRU  = 1u;  // inbound echo only
@@ -189,10 +189,10 @@ inline constexpr uint8_t COUNT = 4u;
 }
 
 // Cross-routing between the transports, which makes the pedal a MIDI interface.
-namespace usb_din {
+namespace usb_jack {
 inline constexpr uint8_t OFF        = 0u;
-inline constexpr uint8_t USB_TO_DIN = 1u;
-inline constexpr uint8_t DIN_TO_USB = 2u;
+inline constexpr uint8_t USB_TO_JACK = 1u;
+inline constexpr uint8_t JACK_TO_USB = 2u;
 inline constexpr uint8_t BOTH       = 3u;
 inline constexpr uint8_t COUNT      = 4u;
 }
@@ -221,7 +221,7 @@ inline constexpr uint8_t OUT_MODE   = 3u;   // out_mode::*
 inline constexpr uint8_t PC_OFFSET  = 4u;   // 0-127; the program that addresses slot 0
 inline constexpr uint8_t CLOCK_OUT  = 5u;   // 0 or 1
 inline constexpr uint8_t CLOCK_THRU = 6u;   // 0 or 1
-inline constexpr uint8_t USB_DIN    = 7u;   // usb_din::*
+inline constexpr uint8_t USB_JACK    = 7u;   // usb_jack::*
 inline constexpr uint8_t RX_PC      = 8u;   // 0 or 1
 inline constexpr uint8_t RX_SYSEX   = 9u;   // 0 or 1
 inline constexpr uint8_t TX_PARAMS  = 10u;  // 0 or 1
@@ -242,7 +242,7 @@ struct RoutingBlock {
     uint8_t pc_offset  = 0u;                       // 0-127
     bool    clock_out  = false;
     bool    clock_thru = true;
-    uint8_t usb_din_route = usb_din::OFF;
+    uint8_t usb_jack_route = usb_jack::OFF;
     bool    rx_pc      = true;
     bool    rx_sysex   = true;
     bool    tx_params  = true;
@@ -260,7 +260,7 @@ inline void read_block(const uint8_t* p, RoutingBlock& out)
     out.pc_offset     = (uint8_t)(p[PC_OFFSET] & 0x7Fu);
     out.clock_out     = (p[CLOCK_OUT] != 0u);
     out.clock_thru    = (p[CLOCK_THRU] != 0u);
-    out.usb_din_route = (uint8_t)(p[USB_DIN] & 0x7Fu);
+    out.usb_jack_route = (uint8_t)(p[USB_JACK] & 0x7Fu);
     out.rx_pc         = (p[RX_PC] != 0u);
     out.rx_sysex      = (p[RX_SYSEX] != 0u);
     out.tx_params     = (p[TX_PARAMS] != 0u);
@@ -278,7 +278,7 @@ inline void write_block(const RoutingBlock& b, uint8_t* out)
     out[PC_OFFSET]  = (uint8_t)(b.pc_offset & 0x7Fu);
     out[CLOCK_OUT]  = b.clock_out ? 1u : 0u;
     out[CLOCK_THRU] = b.clock_thru ? 1u : 0u;
-    out[USB_DIN]    = (uint8_t)(b.usb_din_route & 0x7Fu);
+    out[USB_JACK]    = (uint8_t)(b.usb_jack_route & 0x7Fu);
     out[RX_PC]      = b.rx_pc ? 1u : 0u;
     out[RX_SYSEX]   = b.rx_sysex ? 1u : 0u;
     out[TX_PARAMS]  = b.tx_params ? 1u : 0u;
@@ -310,7 +310,7 @@ inline constexpr uint8_t UID_PACKED_LEN = 14u;
 // match ignores it.
 //
 // This is not belt and braces. Over USB the command reaches one port and only
-// one pedal hears it, but over DIN every pedal downstream of the sender sees
+// one pedal hears it, but over the jack every pedal downstream of the sender sees
 // every byte, and two pedals of the same model answer to the same device byte.
 // An unaddressed reboot command would put an entire chain of them into DFU at
 // once — and a bootloader cannot say which unit it is, so a host then cannot

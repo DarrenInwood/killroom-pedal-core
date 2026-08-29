@@ -1,8 +1,8 @@
 #pragma once
 #include <cstdint>
 
-// Parses MIDI from both transports — UART (DIN) and USB — through one parser
-// per stream, and owns the routing of the DIN Out jack. What a message MEANS is
+// Parses MIDI from both transports — the MIDI jack and USB — through one parser
+// per stream, and owns the routing of the MIDI Out jack. What a message MEANS is
 // the product's business: parsed events leave through six extern-C callbacks the
 // product's main.cpp resolves at link time —
 //
@@ -16,28 +16,28 @@
 //
 // A product with no use for notes or the MIDI-clock tempo layer defines those
 // three as empty bodies; the parser still consumes the bytes, so the wire
-// behaviour (including the DIN Out routing) is identical either way. SYSEX_RX_BUF
+// behaviour (including the MIDI Out routing) is identical either way. SYSEX_RX_BUF
 // comes from the product's pedal_core_ui_config.hpp.
 //
 // Every field of Config beyond `channel` and `omni` defaults to the behaviour a
 // pedal had before it existed, so a product that never sets one is unchanged.
 namespace midi_handler {
 
-    // What the DIN Out jack carries.
+    // What the MIDI Out jack carries.
     enum class OutMode : uint8_t {
         Merge = 0,   // inbound echo plus the pedal's own messages
-        Thru  = 1,   // inbound echo only; the pedal stays silent on DIN
+        Thru  = 1,   // inbound echo only; the pedal stays silent on the jack
         Out   = 2,   // the pedal's own messages only; nothing is echoed
         Off   = 3,   // jack silent — the escape hatch for a MIDI loop
     };
 
     // Cross-routing between the two transports, which turns the pedal into a
-    // MIDI interface: a host reaching downstream pedals, or a DIN controller
+    // MIDI interface: a host reaching downstream pedals, or a MIDI controller
     // reaching the host.
-    enum class UsbDinRoute : uint8_t {
+    enum class UsbJackRoute : uint8_t {
         Off      = 0,
-        UsbToDin = 1,
-        DinToUsb = 2,
+        UsbToJack = 1,
+        JackToUsb = 2,
         Both     = 3,
     };
 
@@ -51,7 +51,7 @@ namespace midi_handler {
         bool        omni       = false;  // receive only
         uint8_t     tx_channel = TX_CHANNEL_FOLLOW_RX;
         OutMode     out_mode   = OutMode::Merge;
-        UsbDinRoute usb_din    = UsbDinRoute::Off;
+        UsbJackRoute usb_jack    = UsbJackRoute::Off;
         bool        clock_thru = true;   // forward an inbound clock, even in OutMode::Out
         bool        rx_pc      = true;   // act on Program Change
         bool        rx_sysex   = true;   // act on SysEx (see always_accepts_sysex below)
@@ -59,7 +59,7 @@ namespace midi_handler {
     };
 
     // Bring the module to a known state and set the receive channel: the settings return
-    // to their defaults, both parsers forget a half-received message, the DIN Out router
+    // to their defaults, both parsers forget a half-received message, the MIDI Out router
     // drops any lock, queue and status it was holding, and the SysEx commands rx_sysex
     // never blocks are cleared. Call once at boot, before naming those commands.
     void init(uint8_t channel, bool omni);
@@ -74,12 +74,12 @@ namespace midi_handler {
     // receive channel when it is set to follow.
     uint8_t tx_channel();
 
-    // --- the DIN Out router ---------------------------------------------------
+    // --- the MIDI Out router ---------------------------------------------------
     //
-    // Everything bound for the DIN jack goes through one arbiter, so two streams cannot
+    // Everything bound for the MIDI jack goes through one arbiter, so two streams cannot
     // splice into each other. What it does with them -- the lock, the queue, the
     // running-status hold, the stall timeout and the policy saying which source reaches
-    // which jack -- is <pedal_core/din_router.hpp>'s, described there. The two functions
+    // which jack -- is <pedal_core/jack_router.hpp>'s, described there. The two functions
     // below are what a product hands it.
 
     // One complete message the pedal originated (3-byte channel message, or a

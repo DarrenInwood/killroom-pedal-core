@@ -58,9 +58,9 @@ inline Settings from_wire(const wire::midi_routing::RoutingBlock& b)
                             ? (midi_handler::OutMode)b.out
                             : midi_handler::OutMode::Merge;
 
-    s.config.usb_din = (b.usb_din_route < wr::usb_din::COUNT)
-                           ? (midi_handler::UsbDinRoute)b.usb_din_route
-                           : midi_handler::UsbDinRoute::Off;
+    s.config.usb_jack = (b.usb_jack_route < wr::usb_jack::COUNT)
+                           ? (midi_handler::UsbJackRoute)b.usb_jack_route
+                           : midi_handler::UsbJackRoute::Off;
 
     s.config.clock_thru = b.clock_thru;
     s.config.rx_pc      = b.rx_pc;
@@ -86,7 +86,7 @@ inline wire::midi_routing::RoutingBlock to_wire(const Settings& s)
                        : (uint8_t)(s.config.tx_channel & 0x0Fu);
 
     b.out           = (uint8_t)s.config.out_mode;
-    b.usb_din_route = (uint8_t)s.config.usb_din;
+    b.usb_jack_route = (uint8_t)s.config.usb_jack;
     b.clock_thru    = s.config.clock_thru;
     b.rx_pc         = s.config.rx_pc;
     b.rx_sysex      = s.config.rx_sysex;

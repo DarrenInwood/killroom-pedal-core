@@ -2,7 +2,7 @@
 #include <cstdint>
 
 // The transport half of a pedal's MIDI responder: everything here mirrors one
-// message onto both transports — USB directly, DIN through the handler's router,
+// message onto both transports — USB directly, the jack through the handler's router,
 // which owns whether the jack carries the pedal's own traffic at all. Messages
 // go out on the transmit channel, which follows the receive channel unless the
 // product has set one, so a pedal listening in Omni still speaks on one channel.

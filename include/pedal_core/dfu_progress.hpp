@@ -22,7 +22,7 @@ inline uint8_t percent(uint32_t done, uint32_t total)
 // `via` names the transport an upload is arriving on, and may be null — the text then
 // stands alone rather than carrying a leading space, which is what the screen shown before
 // any host has claimed the session needs. Naming the wire earns its space on a 21-column
-// line because the pedal listens on USB and MIDI DIN at once and only one of them drives
+// line because the pedal listens on USB and the MIDI jack at once and only one of them drives
 // any given upload: someone watching an updater that is getting no reply can then see on
 // the pedal itself that the other wire holds the session, a state otherwise invisible from
 // either end.

@@ -33,12 +33,12 @@ namespace watchdog {
     void kick();
 }
 
-// The MIDI transports. Byte-level DIN in/out and packetised USB-MIDI, with
+// The MIDI transports. Byte-level MIDI jack in/out and packetised USB-MIDI, with
 // the same signatures the products' drivers already carry, so the hardware
 // implementation is the product's existing driver and no adapter exists.
 namespace uart {
     bool read(uint8_t& byte);    // one byte from the RX ring; false when empty
-    void write(uint8_t byte);    // non-blocking TX (also carries the DIN Thru)
+    void write(uint8_t byte);    // non-blocking TX (also carries the MIDI Thru)
 }
 
 namespace usb_midi {
