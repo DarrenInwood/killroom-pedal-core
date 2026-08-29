@@ -61,6 +61,36 @@ static uint8_t  s_slot[EEPROM_MIRROR_SLOT_BYTES > 0u ? EEPROM_MIRROR_SLOT_BYTES 
 static uint32_t s_slot_addr = NO_SLOT;
 static uint16_t s_slot_len  = 0u;
 
+// Where an address lands in the tail mirror, or nullptr if it is below the span.
+//
+// The span is chosen at compile time because a product mirroring its whole store sets the
+// base to zero, and there `addr >= base` is trivially true — an always-true bounds check
+// worth removing rather than silencing. Specialising means the comparison is never compiled
+// for a product that cannot use it.
+//
+// `if constexpr` does not serve here: GCC 7, which the products build with, diagnoses the
+// discarded branch too. A class template rather than a function one, because the half a
+// product does not use is then never instantiated — an unused function specialisation is a
+// warning of its own. The preprocessor does not serve either: the base is a constexpr
+// rather than a macro, so `#if` reads it as 0 and takes the whole-store branch for every
+// product.
+namespace {
+
+template <uint16_t Base>
+struct TailSpan {
+    static uint8_t* of(uint16_t addr)
+    {
+        return (addr >= Base) ? &s_tail[addr - Base] : nullptr;
+    }
+};
+
+template <>
+struct TailSpan<0u> {
+    static uint8_t* of(uint16_t addr) { return &s_tail[addr]; }   // the whole store is the tail
+};
+
+}  // namespace
+
 // Where [addr, addr+len) lives in the mirror, or nullptr if nothing holds it. `adopt`
 // re-points the bulk window at this span — a write does, a read does not.
 static uint8_t* mirror_span(uint16_t addr, uint16_t len, bool adopt)
@@ -70,8 +100,7 @@ static uint8_t* mirror_span(uint16_t addr, uint16_t len, bool adopt)
 
     if (EEPROM_MIRROR_HEAD_END > 0u && end <= EEPROM_MIRROR_HEAD_END)
         return &s_head[addr];
-    if (EEPROM_MIRROR_TAIL_BASE == 0u || addr >= EEPROM_MIRROR_TAIL_BASE)
-        return &s_tail[addr - EEPROM_MIRROR_TAIL_BASE];
+    if (uint8_t* tail = TailSpan<EEPROM_MIRROR_TAIL_BASE>::of(addr)) return tail;
 
     if (EEPROM_MIRROR_SLOT_BYTES == 0u || len > EEPROM_MIRROR_SLOT_BYTES) return nullptr;
     if (adopt) {

@@ -19,6 +19,15 @@ static const uint8_t ICON_NOTE[5] = { 0xE0u, 0xE0u, 0xE0u, 0x7Fu, 0x07u };
 // draws nothing, because A is the ordinary state and most presets have no scene at all.
 static const uint8_t ICON_SCENE_B[5] = { 0x7Fu, 0x49u, 0x49u, 0x36u, 0x00u };
 
+// Room for the "Page X/Y" indicator, and the conversion that bounds it.
+//
+// A compiler sizes this from the conversion's own range, not from what the values happen to
+// be: promoted to unsigned, each field could be ten digits, and it reports a truncation the
+// code cannot reach. %hu says the fields are shorts, which is both true and narrow enough
+// to fit — and unlike %hhu it still holds page 256, which is one past what a byte carries
+// and exactly the value "the page after the last" reaches.
+static constexpr uint8_t PAGE_TEXT_BYTES = 5u + 5u + 1u + 5u + 1u;   // "Page " %hu "/" %hu NUL
+
 // ---------------------------------------------------------------------------
 // Static helpers
 // ---------------------------------------------------------------------------
@@ -47,9 +56,17 @@ void Compositor::fit(const display::Font& f, const char* src, uint8_t max_px,
 bool Compositor::assign(char* dst, uint16_t cap, const char* src)
 {
     const char* v = (src != nullptr) ? src : "";
-    if (strncmp(dst, v, (size_t)(cap - 1u)) == 0) return false;
-    strncpy(dst, v, (size_t)(cap - 1u));
-    dst[cap - 1u] = '\0';
+    const size_t room = (size_t)(cap - 1u);
+    if (strncmp(dst, v, room) == 0) return false;
+
+    // The copy is spelled out rather than left to strncpy: truncating is the intent here and
+    // the terminator belongs to the same step, but strncpy's contract does not say so and a
+    // compiler warns on every consumer's build. The bytes are what strncpy leaves — the
+    // text, then zeroes to the end of the buffer — and the terminator is guaranteed.
+    size_t n = 0;
+    while (n < room && v[n] != '\0') ++n;
+    memcpy(dst, v, n);
+    memset(dst + n, 0, (size_t)cap - n);
     return true;
 }
 
@@ -231,9 +248,9 @@ void Compositor::draw_context_line()
     }
     // Page widget, left-aligned in its region with a 1px margin (only when >1 page).
     else if (multi) {
-        char pg[12];
-        snprintf(pg, sizeof(pg), "Page %u/%u",
-                 (unsigned)(m_page + 1u), (unsigned)m_num_pages);
+        char pg[PAGE_TEXT_BYTES];
+        snprintf(pg, sizeof(pg), "Page %hu/%hu",
+                 (unsigned short)(m_page + 1u), (unsigned short)m_num_pages);
         display::draw_text(display::FONT_SMALL, (uint8_t)(split_x + 1u), ALGO_Y, pg);
     }
 
@@ -294,8 +311,9 @@ void Compositor::draw_title_page_chip()
 {
     const uint8_t w = page_widget_width();
     const uint8_t x = (uint8_t)(OLED_WIDTH - w);
-    char pg[12];
-    snprintf(pg, sizeof(pg), "Page %u/%u", (unsigned)(m_page + 1u), (unsigned)m_num_pages);
+    char pg[PAGE_TEXT_BYTES];
+    snprintf(pg, sizeof(pg), "Page %hu/%hu",
+             (unsigned short)(m_page + 1u), (unsigned short)m_num_pages);
     display::draw_text(display::FONT_SMALL, (uint8_t)(x + 1u), 4u, pg);        // left-aligned in the box
     display::invert_region(x, TITLE_Y, w, (uint8_t)(TITLE_RULE_Y - TITLE_Y));  // highlight the chip
 }

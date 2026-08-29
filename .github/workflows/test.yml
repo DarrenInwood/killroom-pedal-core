@@ -45,6 +45,14 @@ jobs:
       - name: Every relative doc link resolves
         run: python tools/check_doc_links.py
 
+      # Every product inherits this library's warnings and cannot fix them from its side.
+      # No ARM toolchain here, so this covers the host compiler's families only -- the
+      # products' GCC 7 sees a different set, which the pre-push hook checks where a
+      # toolchain is installed. Both need the optimiser: at -O0 the analysis these come
+      # from does not run, which is why `pio test -e native` never showed any of them.
+      - name: The library compiles clean
+        run: bash tools/check_warnings.sh
+
   native-tests:
     runs-on: ubuntu-latest
     steps:
