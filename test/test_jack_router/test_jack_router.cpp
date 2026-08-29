@@ -15,10 +15,14 @@
 #include <cstdint>
 #include <vector>
 
-// The one contract the router reaches hardware through.
+// The two contracts the router reaches hardware through: what it writes, and how much room
+// the ring will take. write() never waits, so the router has to ask before it starts a
+// message -- a message begun with room for half of it reaches the wire truncated.
 namespace uart {
-    static std::vector<uint8_t> g_wire;   // every byte that reached the jack
-    void write(uint8_t b) { g_wire.push_back(b); }
+    static std::vector<uint8_t> g_wire;      // every byte that reached the jack
+    static uint16_t g_room = 0xFFFFu;        // a ring with room, unless a test narrows it
+    void     write(uint8_t b) { g_wire.push_back(b); }
+    uint16_t tx_room() { return g_room; }
 }
 
 #include <pedal_core/jack_router.hpp>
@@ -33,6 +37,7 @@ static JackRouter* g_r = nullptr;
 
 void setUp(void) {
     uart::g_wire.clear();
+    uart::g_room = 0xFFFFu;
     g_r = new JackRouter();
 }
 void tearDown(void) { delete g_r; g_r = nullptr; }
@@ -354,34 +359,93 @@ void test_realtime_passes_the_lock_untouched(void) {
     TEST_ASSERT_TRUE(wire_is({0xF0, 0xF8, 0x7D}));
 }
 
-// A message the queue cannot hold is dropped rather than truncated: half a message
-// downstream is worse than none.
-void test_a_message_too_large_for_the_queue_is_dropped_whole(void) {
+// A frame the queue cannot hold is dropped rather than truncated: half a frame downstream
+// is worse than none, and a receiver cannot tell a truncated preset dump from a good one.
+// Short messages do not come here at all -- they go to the transmit queue, which is deep in
+// messages rather than in bytes and chooses what it loses.
+void test_a_frame_too_large_for_the_queue_is_dropped_whole(void) {
     configure(OutMode::Merge);
     g_r->sysex_begin(Src::Jack, 1000u);
 
-    // Offer far more than the queue can hold. The status alternates so running status
-    // never applies: with every message re-stating its status, each one that survives is
-    // three bytes on the wire, which is what makes whole-message-ness observable at all.
-    // Held to one status they would compress to two bytes apiece and a truncated message
-    // would be indistinguishable from a compressed one.
-    const uint16_t offered = 200u;
-    for (uint16_t i = 0; i < offered; ++i)
-        send(Src::Self, {(uint8_t)((i & 1u) ? 0x90u : 0xB0u), 0x07u, (uint8_t)(i & 0x7Fu)});
+    // Offer whole frames while the jack is held, until the queue refuses one.
+    const uint16_t offered = 40u;
+    for (uint16_t i = 0u; i < offered; ++i) {
+        const uint8_t frame[8] = { 0xF0u, 0x7Du, 0x01u, (uint8_t)(i & 0x7Fu),
+                                   0x00u, 0x00u, 0x00u, 0xF7u };
+        g_r->message(Src::Self, frame, 8u);
+    }
     g_r->sysex_end(Src::Jack, false);
 
-    // What got through is whole messages and nothing partial, and the overflow was
-    // dropped rather than truncated onto the wire.
-    TEST_ASSERT_EQUAL_UINT16(0u, (uint16_t)(uart::g_wire.size() % 3u));
+    // Whatever got through is whole frames: every one starts F0 and ends F7, and fewer
+    // arrived than were offered.
     TEST_ASSERT_TRUE(uart::g_wire.size() > 0u);
-    TEST_ASSERT_TRUE(uart::g_wire.size() < (size_t)offered * 3u);   // some were refused
-
-    // And every surviving message is intact, not a spliced pair.
-    for (size_t i = 0; i + 2u < uart::g_wire.size(); i += 3u) {
-        const uint8_t st = uart::g_wire[i];
-        TEST_ASSERT_TRUE_MESSAGE(st == 0x90u || st == 0xB0u, "a message lost its status byte");
-        TEST_ASSERT_EQUAL_UINT8(0x07u, uart::g_wire[i + 1u]);
+    TEST_ASSERT_TRUE(uart::g_wire.size() < (size_t)offered * 8u);
+    TEST_ASSERT_EQUAL_UINT16(0u, (uint16_t)(uart::g_wire.size() % 8u));
+    for (size_t i = 0u; i + 7u < uart::g_wire.size(); i += 8u) {
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xF0u, uart::g_wire[i], "a frame lost its opening");
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(0xF7u, uart::g_wire[i + 7u], "a frame lost its end");
     }
+}
+
+// ---------------------------------------------------------------------------
+// The transmit queue, through the jack
+// ---------------------------------------------------------------------------
+
+// A ring with no room holds the message rather than truncating it or spinning for space.
+void test_a_full_ring_holds_the_message_rather_than_blocking(void) {
+    configure(OutMode::Merge);
+    uart::g_room = 0u;
+
+    send(Src::Jack, {0x90, 0x40, 0x7F});
+    TEST_ASSERT_TRUE_MESSAGE(uart::g_wire.empty(), "a byte was written into a full ring");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1u, g_r->pending(), "the message was lost rather than held");
+
+    // Room appears; the next pump sends it whole.
+    uart::g_room = 8u;
+    g_r->pump();
+    TEST_ASSERT_TRUE(wire_is({0x90, 0x40, 0x7F}));
+    TEST_ASSERT_EQUAL_UINT16(0u, g_r->pending());
+}
+
+// Room for two of the three bytes is not room for the message. It waits rather than
+// reaching the wire in pieces.
+void test_a_message_is_never_begun_without_room_for_all_of_it(void) {
+    configure(OutMode::Merge);
+    uart::g_room = 2u;
+    send(Src::Jack, {0x90, 0x40, 0x7F});
+    TEST_ASSERT_TRUE(uart::g_wire.empty());
+    TEST_ASSERT_EQUAL_UINT16(1u, g_r->pending());
+}
+
+// Running status is decided here rather than when the message was queued, because
+// coalescing and eviction rewrite the queue after a message enters it. A sweep that
+// coalesced to one value still elides its status against the message before it.
+void test_running_status_is_decided_at_the_drain(void) {
+    configure(OutMode::Merge);
+    send(Src::Jack, {0xB0, 0x07, 0x40});          // the run starts
+    uart::g_room = 0u;                            // now hold everything back
+    for (uint8_t v = 0u; v < 20u; ++v) send(Src::Jack, {0xB0, 0x4A, v});   // a sweep, coalescing
+    send(Src::Jack, {0xB0, 0x07, 0x41});          // and another controller on the same status
+
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(2u, g_r->pending(), "the sweep did not coalesce");
+
+    uart::g_room = 0xFFFFu;
+    g_r->pump();
+    // Both queued messages carry the status already on the wire, so both leave as data only.
+    TEST_ASSERT_TRUE(wire_is({0xB0, 0x07, 0x40, 0x4A, 0x13, 0x07, 0x41}));
+}
+
+// A frame owns the jack outright, so the queue holds until it ends -- and then drains
+// behind the frames that were waiting whole.
+void test_the_queue_waits_for_a_streaming_frame(void) {
+    configure(OutMode::Merge);
+    g_r->sysex_begin(Src::Jack, 1000u);
+    g_r->sysex_byte(0xF0u, 1000u);
+    send(Src::Self, {0x90, 0x40, 0x7F});
+    TEST_ASSERT_TRUE(wire_is({0xF0}));
+
+    g_r->sysex_end(Src::Jack, true);
+    TEST_ASSERT_TRUE(wire_is({0xF0, 0xF7, 0x90, 0x40, 0x7F}));
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +521,34 @@ void test_a_fresh_router_holds_nothing(void) {
     TEST_ASSERT_FALSE(fresh.poll(100000u, owner));
 }
 
+
+// An evicted entry leaves nothing of itself on the wire. Running status is decided at the
+// drain precisely because eviction rewrites the queue after a message enters it: the status
+// byte the jack is on cannot be known when the message is queued.
+void test_running_status_is_correct_after_an_eviction(void) {
+    configure(OutMode::Merge);
+    uart::g_room = 0u;                              // hold everything in the queue
+
+    send(Src::Jack, {0xB0, 0x4A, 0x10});            // coalescable: the eviction will take it
+    send(Src::Jack, {0x90, 0x40, 0x7F});            // a note, which cannot be given up
+    for (uint16_t i = 2u; i < 256u; ++i)
+        send(Src::Jack, {0xC0, (uint8_t)(i & 0x7Fu)});
+
+    send(Src::Jack, {0x80, 0x40, 0x00});            // a note off is admitted, and evicts
+
+    uart::g_room = 0xFFFFu;
+    g_r->pump();
+
+    // The controller never reaches the wire, so its status byte does not either: the first
+    // thing out is the note, stating its own status.
+    TEST_ASSERT_TRUE(uart::g_wire.size() >= 3u);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x90u, uart::g_wire[0], "an evicted entry left its status behind");
+    TEST_ASSERT_EQUAL_UINT8(0x40u, uart::g_wire[1]);
+    TEST_ASSERT_EQUAL_UINT8(0x7Fu, uart::g_wire[2]);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x80u, uart::g_wire.back() == 0x00u ? 0x80u : 0xFFu,
+                                    "the note off did not arrive");
+}
+
 int main(int, char**)
 {
     UNITY_BEGIN();
@@ -483,7 +575,12 @@ int main(int, char**)
     RUN_TEST(test_only_the_owner_ends_the_frame);
     RUN_TEST(test_the_queue_drains_in_order);
     RUN_TEST(test_realtime_passes_the_lock_untouched);
-    RUN_TEST(test_a_message_too_large_for_the_queue_is_dropped_whole);
+    RUN_TEST(test_a_frame_too_large_for_the_queue_is_dropped_whole);
+    RUN_TEST(test_a_full_ring_holds_the_message_rather_than_blocking);
+    RUN_TEST(test_a_message_is_never_begun_without_room_for_all_of_it);
+    RUN_TEST(test_running_status_is_decided_at_the_drain);
+    RUN_TEST(test_running_status_is_correct_after_an_eviction);
+    RUN_TEST(test_the_queue_waits_for_a_streaming_frame);
     RUN_TEST(test_a_frame_that_stops_coming_gives_the_jack_back);
     RUN_TEST(test_a_live_frame_never_stalls);
     RUN_TEST(test_an_idle_jack_does_not_stall);

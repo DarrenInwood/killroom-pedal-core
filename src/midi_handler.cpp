@@ -23,6 +23,8 @@ extern "C" void on_midi_clock_reset();
 static midi_handler::Config s_config;
 
 // The SysEx commands rx_sysex never blocks. Empty until the product names them.
+static bool s_sysex_dispatched = false;   // one reply answered this pass; see update()
+
 static const uint8_t* s_sysex_always     = nullptr;
 static uint8_t        s_sysex_always_len = 0;
 
@@ -132,6 +134,7 @@ static void dispatch_sysex(Parser& p)
                      && (s_config.rx_sysex || sysex_always_accepted(p));
     if (accept && p.sysex_len >= 2) {
         on_midi_sysex(p.sysex_buf, p.sysex_len);
+        s_sysex_dispatched = true;   // the pass has spent its reply budget
     }
     p.sysex_len      = 0;
     p.in_sysex       = false;
@@ -250,13 +253,32 @@ void midi_handler::init(uint8_t channel, bool omni)
 
     s_sysex_always     = nullptr;
     s_sysex_always_len = 0;
+    s_sysex_dispatched = false;
 }
 
 void midi_handler::update()
 {
+    // One reply in flight is the whole dispatch budget.
+    //
+    // A short message costs microseconds and lands in a queue that drops rather than blocks,
+    // so it needs no budget. A SysEx reply does: it streams under the jack's frame lock, and
+    // a host sending a burst of dump requests would otherwise have this call answer all of
+    // them in one pass -- long enough for the product to miss its watchdog. The rest of the
+    // burst stays in the receive ring and is answered on later passes.
+    //
+    // The budget is one dispatched frame, not one held lock: a reply is written whole rather
+    // than streamed, so it never holds the jack across a pass and there is no lock to test
+    // for. Bounding the count is what the budget was for either way.
+    s_sysex_dispatched = false;
+
     uint8_t byte;
-    while (uart::read(byte))     feed_byte(s_jack_parser, byte, Src::Jack);
-    while (usb_midi::read(byte)) feed_byte(s_usb_parser,  byte, Src::Usb);
+    while (uart::read(byte)) {
+        feed_byte(s_jack_parser, byte, Src::Jack);
+        if (s_sysex_dispatched) break;
+    }
+    while (usb_midi::read(byte) && !s_sysex_dispatched) {
+        feed_byte(s_usb_parser, byte, Src::Usb);
+    }
 
     // A frame that stopped coming has to give the jack back, or everything the
     // pedal says queues behind a sender that is no longer there. Close the
@@ -271,6 +293,10 @@ void midi_handler::update()
         Parser& p = (stalled_owner == Src::Usb) ? s_usb_parser : s_jack_parser;
         p.sysex_to_jack = false;
     }
+
+    // Send what the wire has room for. Nothing here waits: the queue holds what the ring
+    // cannot take yet.
+    s_router.pump();
 }
 
 // The router reads the routing fields and the parser below reads the receive ones, and the

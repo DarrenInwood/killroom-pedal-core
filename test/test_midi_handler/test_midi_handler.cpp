@@ -21,6 +21,8 @@ namespace uart {
     void init() {}
     bool read(uint8_t& b) { if (g_rx.empty()) return false; b = g_rx.front(); g_rx.pop_front(); return true; }
     void write(uint8_t b) { g_thru.push_back(b); }
+    static uint16_t g_room = 0xFFFFu;   // a ring with room, unless a test narrows it
+    uint16_t tx_room() { return g_room; }
 }
 namespace systick { void fake_set_ms(uint32_t); void fake_advance_ms(uint32_t); }
 
@@ -104,6 +106,7 @@ void setUp(void) {
     usb_midi::g_tx.clear();
     usb_midi::g_tx_sysex.clear();
     systick::fake_set_ms(0u);
+    uart::g_room = 0xFFFFu;
 
     // One call. init() brings the parsers, the router, the settings and the clock flag to
     // a known state, which is the whole of what a case needs resetting -- so this suite
@@ -797,6 +800,33 @@ void test_a_routing_change_restates_the_status(void) {
     TEST_ASSERT_EQUAL_INT(3, (int)uart::g_thru.size());   // must re-state B0
 }
 
+
+// A host that queues dump requests gets one answer a pass. Answering a whole burst in one
+// call would hold the superloop long enough for the product to miss its watchdog; the rest
+// of the burst stays in the receive ring and is answered on later passes.
+void test_only_one_sysex_is_answered_per_pass(void) {
+    // Two complete requests, both in the ring before a single update().
+    for (int i = 0; i < 2; ++i)
+        for (int b : { 0xF0, 0x7D, 0x01, 0x70, 0xF7 }) uart::g_rx.push_back((uint8_t)b);
+
+    midi_handler::update();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, (int)g_sysex.size(), "a burst was answered in one pass");
+    TEST_ASSERT_TRUE_MESSAGE(!uart::g_rx.empty(), "the second request left the ring");
+
+    midi_handler::update();
+    TEST_ASSERT_EQUAL_INT(2, (int)g_sysex.size());
+    TEST_ASSERT_TRUE(uart::g_rx.empty());
+}
+
+// A frame being forwarded is not a reply, and its bytes are exactly what the drain has to
+// keep feeding: the budget must not stall a pass-through mid-frame.
+void test_a_forwarded_frame_still_drains_whole(void) {
+    midi_handler::Config c; c.out_mode = midi_handler::OutMode::Merge; c.rx_sysex = false;
+    midi_handler::set_config(c);
+    feed_uart({0xF0, 0x7D, 0x02, 0x11, 0x22, 0x33, 0xF7});
+    TEST_ASSERT_TRUE_MESSAGE(uart::g_rx.empty(), "a forwarded frame was left half-read");
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_cc_dispatch_on_matching_channel);
@@ -841,5 +871,7 @@ int main(int, char**) {
     RUN_TEST(test_nothing_is_missed_while_the_preset_loads);
     RUN_TEST(test_the_gap_between_the_two_changes_nothing);
     RUN_TEST(test_a_routing_change_restates_the_status);
+    RUN_TEST(test_only_one_sysex_is_answered_per_pass);
+    RUN_TEST(test_a_forwarded_frame_still_drains_whole);
     return UNITY_END();
 }

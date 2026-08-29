@@ -83,6 +83,15 @@ public:
         return true;
     }
 
+    // The next message to send, without taking it. A drain has to know how long a message
+    // will be on the wire before it commits to sending it.
+    bool peek(MidiMessage& out) const
+    {
+        if (m_count == 0u) return false;
+        out = m_slot[m_head].msg;
+        return true;
+    }
+
     // The next message to send, in order. False when there is nothing.
     bool pop(MidiMessage& out)
     {

@@ -39,6 +39,14 @@ namespace watchdog {
 namespace uart {
     bool read(uint8_t& byte);    // one byte from the RX ring; false when empty
     void write(uint8_t byte);    // non-blocking TX (also carries the MIDI Thru)
+
+    // How many bytes the transmit ring will accept right now.
+    //
+    // write() never waits for room, so a caller with a whole message to send has to ask
+    // before it starts one: a message begun with room for half of it reaches the wire
+    // truncated, and a receiver cannot tell a truncated preset dump from a good one. Loss
+    // is decided a message at a time, above this, where messages are still whole.
+    uint16_t tx_room();
 }
 
 namespace usb_midi {

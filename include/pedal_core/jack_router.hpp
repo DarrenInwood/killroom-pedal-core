@@ -1,7 +1,8 @@
 #pragma once
 #include <cstdint>
 #include "hal.hpp"           // uart::write
-#include "midi_handler.hpp"  // Config, OutMode, UsbJackRoute
+#include "midi_handler.hpp"   // Config, OutMode, UsbJackRoute
+#include "midi_out_queue.hpp" // the transmit queue and what survives it
 
 // The MIDI Out router: what arbitrates the MIDI Out jack between the three things that
 // want it -- the inbound stream being echoed, the other transport being cross-routed,
@@ -102,17 +103,55 @@ public:
 
     // --- traffic ---------------------------------------------------------------
 
-    // One complete message (a channel message, or a whole F0..F7 frame). Dropped where
-    // the policy does not carry this source. Contending with a frame already streaming it
-    // waits in the queue; a message that does not fit the queue is dropped rather than
-    // spliced.
+    // One complete message the jack should carry: a channel message, or a whole F0..F7
+    // frame. Dropped where the policy does not carry this source.
+    //
+    // A short message joins the transmit queue, which decides what survives when there is
+    // more to send than 31.25 kbaud can carry -- see MidiOutQueue. A frame cannot: it has no
+    // identity to coalesce on and no bound on its length, so it keeps the older path of
+    // waiting whole for the jack.
     void message(Src src, const uint8_t* msg, uint16_t n)
     {
         if (n == 0u || !carries(src)) return;
-        if (m_locked && m_owner != src) { queue_push(msg, n); return; }
-        emit(msg, n);
-        if (!m_locked) queue_flush();
+
+        if (n > 3u || msg[0] == 0xF0u) {
+            if (m_locked && m_owner != src) { queue_push(msg, n); return; }
+            emit(msg, n);
+            if (!m_locked) queue_flush();
+            return;
+        }
+
+        MidiMessage m;
+        m.status = msg[0];
+        m.len    = (uint8_t)n;
+        for (uint8_t i = 1u; i < (uint8_t)n; ++i) m.data[i - 1u] = msg[i];
+        m_out.push(m, (src == Src::Self) ? MidiOutQueue::Origin::Own
+                                         : MidiOutQueue::Origin::Forwarded);
+        pump();
     }
+
+    // Send what the wire has room for. Call every superloop wake, and after anything that
+    // frees the jack.
+    //
+    // Nothing here waits: the queue holds what the ring cannot take yet, and the ring is
+    // asked for room before a message is begun rather than during it. A frame streaming
+    // through owns the jack outright, so the queue holds until it ends.
+    void pump()
+    {
+        MidiMessage next;
+        while (!m_locked && m_out.peek(next)) {
+            if (uart::tx_room() < wire_length(next)) return;
+            m_out.pop(next);
+            emit_message(next);
+        }
+    }
+
+    // What the queue is holding, for a caller that wants to know whether the jack is behind.
+    uint16_t pending() const { return m_out.size(); }
+
+    // Whether a frame from this source is streaming through right now. A caller uses it to
+    // stop handing itself more work while a reply of its own is still going out.
+    bool streaming_from(Src src) const { return m_locked && m_owner == src; }
 
     // One System Real-Time byte. Legal anywhere in the stream, so it is never queued and
     // passes a streaming frame untouched.
@@ -155,7 +194,8 @@ public:
         if (!m_locked || m_owner != src) return;
         if (write_eox) uart::write(0xF7u);
         m_locked = false;
-        queue_flush();
+        queue_flush();   // whole frames that waited for the jack
+        pump();          // then whatever the transmit queue is holding
     }
 
     // Has the frame holding the jack stopped coming?
@@ -194,6 +234,36 @@ private:
         for (uint16_t i = 0; i < n; ++i) uart::write(b[i]);
     }
 
+    // How many bytes this message costs on the wire right now -- one fewer when its status
+    // is already the one the jack is on. Asked before the message is begun, because a
+    // message half-written is a message the receiver cannot parse.
+    uint16_t wire_length(const MidiMessage& m) const
+    {
+        const uint8_t st = m.status;
+        const bool running = (st >= 0x80u && st < 0xF0u && st == m_running);
+        return running ? (uint16_t)(m.len - 1u) : (uint16_t)m.len;
+    }
+
+    // One queued message onto the jack, holding running status. Coalescing and eviction
+    // rewrite the queue after a message enters it, so which status byte is already on the
+    // wire is not knowable until here: the queue holds canonical messages and this owns the
+    // wire representation.
+    void emit_message(const MidiMessage& m)
+    {
+        const uint8_t st = m.status;
+        if (st >= 0x80u && st < 0xF0u) {
+            if (st == m_running) {
+                for (uint8_t i = 1u; i < m.len; ++i) uart::write(m.data[i - 1u]);
+                return;
+            }
+            m_running = st;
+        } else if (st >= 0xF0u && st <= 0xF7u) {
+            m_running = 0u;
+        }
+        uart::write(st);
+        for (uint8_t i = 1u; i < m.len; ++i) uart::write(m.data[i - 1u]);
+    }
+
     // One whole message onto the jack, holding running status: a channel message whose
     // status is already the one on the wire goes out as its data bytes alone, exactly as
     // the controller sent it.
@@ -219,10 +289,13 @@ private:
         raw(msg, n);
     }
 
-    // Whole message or nothing: one the queue cannot hold is dropped rather than
-    // truncated, because half a message downstream is worse than none. Records are
-    // length-prefixed so the flush still knows where each message ends -- it has to, or
-    // it could not decide which status bytes running status lets it leave out.
+    // A whole frame or nothing: one the queue cannot hold is dropped rather than truncated,
+    // because half a frame downstream is worse than none. Records are length-prefixed so the
+    // flush still knows where each ends -- it has to, or it could not decide which status
+    // bytes running status lets it leave out.
+    //
+    // This holds frames only. Short messages go to the transmit queue instead, where they
+    // can coalesce and where what is lost under pressure is chosen rather than arbitrary.
     void queue_push(const uint8_t* b, uint16_t n)
     {
         if (n > 255u) return;
@@ -251,8 +324,10 @@ private:
     uint8_t  m_running = 0u;
     uint32_t m_fed_ms  = 0u;     // when the owning frame last produced a byte
 
-    uint8_t  m_queue[QUEUE_BYTES] = {};
+    uint8_t  m_queue[QUEUE_BYTES] = {};   // frames waiting for the jack
     uint16_t m_queued = 0u;
+
+    MidiOutQueue m_out;                   // short messages waiting for the wire
 };
 
 }  // namespace pedal_core
