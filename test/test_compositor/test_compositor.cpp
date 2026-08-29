@@ -123,6 +123,7 @@ static constexpr uint8_t PANEL_TRACK_X0 = 4u;    // draw_gauge(4, ..., OLED_WIDT
 static constexpr uint8_t PANEL_TRACK_W  = 120u;
 static constexpr uint8_t TICK_W         = 2u;
 static constexpr uint8_t TICK_TOP       = 57u, TICK_BOTTOM = 58u;
+static constexpr uint8_t GAUGE_TOP      = 59u;
 
 // Both clocks move together: the producers stamp themselves from systick, and update() is
 // handed the same instant.
@@ -301,23 +302,35 @@ void test_the_panel_tick_reaches_both_ends_of_its_track(void) {
                                   "the pickup tick overhung the end of the track");
 }
 
-// The blind reveals the panel a row at a time, and the tick waits for both of its own
-// rows: it and the gauge it is read against arrive together, or the reference mark would
-// land before the thing it refers to.
-void test_the_panel_tick_waits_for_the_blind(void) {
-    Frame early, late;
-    { TestCompositor c; boot(c, 1000);
-      c.show_param_change("Mix", "50%", 512u, PARAM_MID);
-      at(1016); c.update(1016); display::capture(early); }     // mid-unroll
-    { TestCompositor c; boot(c, 1000);
-      c.show_param_change("Mix", "50%", 512u, PARAM_MID);
-      at(1140); c.update(1140); display::capture(late); }
+// The blind reveals the panel a row at a time, and the gauge grows out from under its edge,
+// so it reaches the screen later than the rows above it. The tick waits for the gauge: a
+// mark meaning "how much further to turn" says nothing without the bar it is measured
+// against, so no frame of the unroll may carry one without the other.
+void test_the_panel_tick_never_arrives_before_its_gauge(void) {
+    // Every frame of the unroll, not a sampled one: the two conditions differ by three
+    // rows, which is a handful of frames wide and easy to step over.
+    for (uint32_t t = 1000; t <= 1160; ++t) {
+        Frame f;
+        { TestCompositor c; boot(c, 1000);
+          c.show_param_change("Mix", "50%", 512u, PARAM_MID);
+          at(t); c.update(t); display::capture(f); }
 
-    for (uint8_t y = TICK_TOP; y <= TICK_BOTTOM; ++y)
-        TEST_ASSERT_FALSE_MESSAGE(row_has_ink(early, y),
-                                  "the pickup tick drew before the blind reached its rows");
-    TEST_ASSERT_TRUE_MESSAGE(row_has_ink(late, TICK_TOP),
-                             "the pickup tick never arrived");
+        const bool tick  = row_has_ink(f, TICK_TOP) || row_has_ink(f, TICK_BOTTOM);
+        // The gauge takes an explicit height and grows out from under the blind, so early
+        // on it is only a few rows tall: its top row is what says it is there at all.
+        const bool gauge = row_has_ink(f, GAUGE_TOP);
+        if (tick)
+            TEST_ASSERT_TRUE_MESSAGE(gauge,
+                                     "the pickup tick drew in a frame with no gauge under it");
+    }
+
+    // And it does arrive: a fully unrolled panel carries both.
+    Frame late;
+    { TestCompositor c; boot(c, 1000);
+      c.show_param_change("Mix", "50%", 512u, PARAM_MID);
+      at(1160); c.update(1160); display::capture(late); }
+    TEST_ASSERT_TRUE_MESSAGE(row_has_ink(late, TICK_TOP), "the pickup tick never arrived");
+    TEST_ASSERT_TRUE_MESSAGE(row_has_ink(late, 63u), "the gauge never reached the bottom edge");
 }
 
 // The splash puts its first frame up at once and the superloop animates the rest.
@@ -647,7 +660,7 @@ int main(int, char**) {
     RUN_TEST(test_the_panel_marks_where_the_pot_is_waiting);
     RUN_TEST(test_a_panel_with_no_pickup_leaves_the_tick_rows_clear);
     RUN_TEST(test_the_panel_tick_reaches_both_ends_of_its_track);
-    RUN_TEST(test_the_panel_tick_waits_for_the_blind);
+    RUN_TEST(test_the_panel_tick_never_arrives_before_its_gauge);
     RUN_TEST(test_the_splash_animates_then_gives_the_screen_up);
     RUN_TEST(test_a_faulted_boot_runs_the_fault_then_the_splash);
     RUN_TEST(test_the_save_animation_owns_the_screen);
