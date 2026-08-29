@@ -33,9 +33,11 @@ bash tools/install_hooks.sh
 ```
 
 It points `core.hooksPath` at [.githooks/](.githooks/), whose `pre-push` runs the whole gate —
-the native suites, every `tools/**/test_*.py`, and the doc-link check — before anything leaves
-the machine. The board tests need `pcbnew` and are skipped, loudly, where no interpreter can
-import it; everything else still runs. `git push --no-verify` bypasses the lot.
+the native suites, every `tools/**/test_*.py`, the doc-link check and
+[tools/check_warnings.sh](tools/check_warnings.sh) — before anything leaves the machine. The
+board tests need `pcbnew`, and the warning sweep's ARM leg needs an ARM toolchain; both are
+skipped, loudly, where those are absent, and everything else still runs.
+`git push --no-verify` bypasses the lot.
 
 **The config guard is the trap.** Several modules open with
 

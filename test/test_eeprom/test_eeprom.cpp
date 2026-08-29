@@ -221,6 +221,28 @@ void test_ram_mirror_unheld_record_reads_blank(void) {
     for (uint8_t i = 0; i < sizeof(buf); ++i) TEST_ASSERT_EQUAL_UINT8(0xFFu, buf[i]);
 }
 
+
+// The tail mirror's span is chosen at compile time, and the half a whole-store product
+// takes is one this library's own configuration never does -- its base is non-zero, so the
+// zero-base specialisation is compiled here and reached by nothing. Both halves are checked
+// directly: the address arithmetic is the whole of what they do, and getting it wrong would
+// hand a product the wrong byte of its mirror with nothing to say so.
+void test_the_tail_span_maps_an_address_to_its_mirror(void) {
+    const uint16_t base = EEPROM_MIRROR_TAIL_BASE;
+
+    // At or past the configured base, an address lands at that offset into the tail.
+    TEST_ASSERT_EQUAL_PTR(&s_tail[0], TailSpan<EEPROM_MIRROR_TAIL_BASE>::of(base));
+    TEST_ASSERT_EQUAL_PTR(&s_tail[5], TailSpan<EEPROM_MIRROR_TAIL_BASE>::of((uint16_t)(base + 5u)));
+
+    // Below it the address belongs to another span, and the caller falls through to it.
+    TEST_ASSERT_NULL(TailSpan<EEPROM_MIRROR_TAIL_BASE>::of((uint16_t)(base - 1u)));
+
+    // A product mirroring its whole store: every address is in the tail at its own offset,
+    // and none is ever refused.
+    TEST_ASSERT_EQUAL_PTR(&s_tail[0], TailSpan<0u>::of(0u));
+    TEST_ASSERT_EQUAL_PTR(&s_tail[5], TailSpan<0u>::of(5u));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_read_command_framing);
@@ -232,5 +254,6 @@ int main(int, char**) {
     RUN_TEST(test_ram_mirror_holds_the_record_written_last);
     RUN_TEST(test_ram_mirror_evicts_the_previous_record_as_blank);
     RUN_TEST(test_ram_mirror_unheld_record_reads_blank);
+    RUN_TEST(test_the_tail_span_maps_an_address_to_its_mirror);
     return UNITY_END();
 }

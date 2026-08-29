@@ -104,6 +104,10 @@ done
 
 step "doc links" "$PY" tools/check_doc_links.py
 
+# The library compiles clean, so a consumer can turn -Werror on. Its own ARM leg is skipped
+# where no toolchain is installed, the same way the board tests are.
+step "warnings" bash tools/check_warnings.sh
+
 # --- verdict -----------------------------------------------------------------
 rm -f /tmp/pre-push-out
 
