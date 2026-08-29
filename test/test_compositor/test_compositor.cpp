@@ -102,6 +102,28 @@ static bool frame_has_ink(const Frame f)
 // The display page a pixel row falls in; the framebuffer is page-format, 8 rows apiece.
 static constexpr uint8_t page_of(uint8_t y) { return (uint8_t)(y / 8u); }
 
+// One pixel out of that page format: bit (y % 8) of the column's byte.
+static bool px(const Frame f, uint8_t x, uint8_t y)
+{
+    return (f[page_of(y)][x] & (uint8_t)(1u << (y % 8u))) != 0u;
+}
+
+// Is any pixel set along a row?
+static bool row_has_ink(const Frame f, uint8_t y)
+{
+    for (uint8_t x = 0; x < OLED_WIDTH; ++x)
+        if (px(f, x, y)) return true;
+    return false;
+}
+
+// Where the focus panel's gauge track sits, spelled out rather than read off the
+// compositor: these are the numbers the tick has to land on, so a test that derived them
+// the way the code does would agree with any rule the code happened to hold.
+static constexpr uint8_t PANEL_TRACK_X0 = 4u;    // draw_gauge(4, ..., OLED_WIDTH - 8, ...)
+static constexpr uint8_t PANEL_TRACK_W  = 120u;
+static constexpr uint8_t TICK_W         = 2u;
+static constexpr uint8_t TICK_TOP       = 57u, TICK_BOTTOM = 58u;
+
 // Both clocks move together: the producers stamp themselves from systick, and update() is
 // handed the same instant.
 static void at(uint32_t ms) { pedal_core::host_display::set_now_ms(ms); }
@@ -216,6 +238,86 @@ void test_the_focus_panel_leaves_the_header_alone(void) {
                                          "the panel painted above its band");
     // And the band itself is not what was underneath.
     TEST_ASSERT_FALSE(frames_match(plain, with_panel));
+}
+
+// A knob still waiting to be picked up keeps its marker when the panel unrolls over the
+// grid: the tick is the whole reason the player knows which way to keep turning, and the
+// panel is what they are looking at while they turn it.
+void test_the_panel_marks_where_the_pot_is_waiting(void) {
+    Frame f;
+    { TestCompositor c; boot(c, 1000);
+      c.show_param_change("Mix", "50%", 0u, PARAM_MID);
+      at(1140); c.update(1140); display::capture(f); }        // fully unrolled
+
+    // PARAM_MID lands 58 columns along the 118px travel (120 wide, less the tick's own 2).
+    const uint8_t x = (uint8_t)(PANEL_TRACK_X0 + 58u);
+    for (uint8_t y = TICK_TOP; y <= TICK_BOTTOM; ++y) {
+        TEST_ASSERT_TRUE_MESSAGE(px(f, x, y) && px(f, (uint8_t)(x + 1u), y),
+                                 "the panel drew no pickup tick where the pot is pointing");
+        TEST_ASSERT_FALSE_MESSAGE(px(f, (uint8_t)(x - 1u), y),
+                                  "the pickup tick is wider than it should be");
+    }
+
+    // And the gauge still draws, in the four rows the tick left it.
+    TEST_ASSERT_TRUE_MESSAGE(row_has_ink(f, 63u), "the panel gauge lost its bottom row");
+}
+
+// The tick belongs to a knob being turned into range, so a panel that is not answering one
+// leaves those rows to the screen.
+void test_a_panel_with_no_pickup_leaves_the_tick_rows_clear(void) {
+    Frame f;
+    { TestCompositor c; boot(c, 1000);
+      c.show_param_change("Mix", "50%", 512u);
+      at(1140); c.update(1140); display::capture(f); }
+
+    for (uint8_t y = TICK_TOP; y <= TICK_BOTTOM; ++y)
+        TEST_ASSERT_FALSE_MESSAGE(row_has_ink(f, y),
+                                  "an unmarked panel drew in the pickup tick's rows");
+}
+
+// Both ends of the travel: a pot at rest sits at the track's left edge, and one at full
+// scale sits inside its right edge rather than half off the end of it.
+void test_the_panel_tick_reaches_both_ends_of_its_track(void) {
+    Frame low, high;
+    { TestCompositor c; boot(c, 1000);
+      c.show_param_change("Mix", "50%", 512u, 0u);
+      at(1140); c.update(1140); display::capture(low); }
+
+    { TestCompositor c; boot(c, 1000);
+      c.show_param_change("Mix", "50%", 512u, PARAM_MAX);
+      at(1140); c.update(1140); display::capture(high); }
+
+    TEST_ASSERT_TRUE_MESSAGE(px(low, PANEL_TRACK_X0, TICK_TOP)
+                             && px(low, (uint8_t)(PANEL_TRACK_X0 + 1u), TICK_TOP),
+                             "a pot at rest did not sit at the left end of the track");
+
+    // The rightmost column the tick may occupy is the track's own last.
+    const uint8_t last = (uint8_t)(PANEL_TRACK_X0 + PANEL_TRACK_W - 1u);
+    TEST_ASSERT_TRUE_MESSAGE(px(high, last, TICK_TOP)
+                             && px(high, (uint8_t)(last - (TICK_W - 1u)), TICK_TOP),
+                             "a pot at full scale did not reach the right end of the track");
+    for (uint8_t x = (uint8_t)(last + 1u); x < OLED_WIDTH; ++x)
+        TEST_ASSERT_FALSE_MESSAGE(px(high, x, TICK_TOP),
+                                  "the pickup tick overhung the end of the track");
+}
+
+// The blind reveals the panel a row at a time, and the tick waits for both of its own
+// rows: it and the gauge it is read against arrive together, or the reference mark would
+// land before the thing it refers to.
+void test_the_panel_tick_waits_for_the_blind(void) {
+    Frame early, late;
+    { TestCompositor c; boot(c, 1000);
+      c.show_param_change("Mix", "50%", 512u, PARAM_MID);
+      at(1016); c.update(1016); display::capture(early); }     // mid-unroll
+    { TestCompositor c; boot(c, 1000);
+      c.show_param_change("Mix", "50%", 512u, PARAM_MID);
+      at(1140); c.update(1140); display::capture(late); }
+
+    for (uint8_t y = TICK_TOP; y <= TICK_BOTTOM; ++y)
+        TEST_ASSERT_FALSE_MESSAGE(row_has_ink(early, y),
+                                  "the pickup tick drew before the blind reached its rows");
+    TEST_ASSERT_TRUE_MESSAGE(row_has_ink(late, TICK_TOP),
+                             "the pickup tick never arrived");
 }
 
 // The splash puts its first frame up at once and the superloop animates the rest.
@@ -542,6 +644,10 @@ int main(int, char**) {
     RUN_TEST(test_the_switch_labels_draw_on_the_bottom_row);
     RUN_TEST(test_a_transient_suppresses_the_switch_labels);
     RUN_TEST(test_the_focus_panel_leaves_the_header_alone);
+    RUN_TEST(test_the_panel_marks_where_the_pot_is_waiting);
+    RUN_TEST(test_a_panel_with_no_pickup_leaves_the_tick_rows_clear);
+    RUN_TEST(test_the_panel_tick_reaches_both_ends_of_its_track);
+    RUN_TEST(test_the_panel_tick_waits_for_the_blind);
     RUN_TEST(test_the_splash_animates_then_gives_the_screen_up);
     RUN_TEST(test_a_faulted_boot_runs_the_fault_then_the_splash);
     RUN_TEST(test_the_save_animation_owns_the_screen);

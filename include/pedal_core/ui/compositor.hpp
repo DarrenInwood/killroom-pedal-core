@@ -129,7 +129,12 @@ public:
     uint8_t screen() const { return m_screen; }
 
     // --- transients ---------------------------------------------------------
-    virtual void show_param_change(const char* name, const char* value, uint16_t bar);
+    // `pickup` is where the pot is pointing when the panel answers a turn of a knob still
+    // waiting to be picked up, drawn as the tick above the gauge. NO_BAR everywhere else:
+    // the mark says which way to keep turning *this* knob, so it belongs to the gesture of
+    // turning it rather than to every way a value can move.
+    virtual void show_param_change(const char* name, const char* value, uint16_t bar,
+                                   uint16_t pickup = NO_BAR);
     virtual void show_message(const char* msg, MsgPos pos = MsgPos::Centre);
     virtual void show_saved();
     virtual void show_splash();
@@ -171,6 +176,11 @@ protected:
     static void draw_centered(const display::Font& f, uint8_t x0, uint8_t w,
                               uint8_t y, const char* s);
     static void rect_outline(uint8_t x, uint8_t y, uint8_t w, uint8_t h);
+    // Where a pot is pointing while its knob waits to be picked up: a tick on row `y`,
+    // over a gauge track `track_w` wide starting at `x0`. The travel is inset by the
+    // tick's own width, so a pot at full scale lands inside the track's right end rather
+    // than half off it. The grid column and the panel differ only in those two numbers.
+    static void draw_pickup_tick(uint8_t x0, uint8_t track_w, uint8_t y, uint16_t pot);
     static void draw_tri(uint8_t cx, uint8_t y, bool up);
     static void fit(const display::Font& f, const char* src, uint8_t max_px,
                     char* dst, uint8_t dstsz);
@@ -210,11 +220,16 @@ protected:
     // drawing FONT_TEXT at y=16 fills rows 16..26, so a rule one row higher would shave the
     // descenders off its top line. The performance grid's own name row starts painting at
     // y=28, so nothing above the rule is lost there either.
-    static constexpr uint8_t PANEL_Y       = 27u;  // separator rule; the panel owns 27..63
-    static constexpr uint8_t PANEL_NAME_Y  = 28u;  // FONT_TEXT (11px) -> 28..38
-    static constexpr uint8_t PANEL_VAL_Y   = 40u;  // FONT_NAME (17px) -> 40..56
-    static constexpr uint8_t PANEL_GAUGE_Y = 58u;
-    static constexpr uint8_t PANEL_GAUGE_H = 6u;   // -> 58..63, flush to the bottom edge
+    static constexpr uint8_t PANEL_Y        = 27u;  // separator rule; the panel owns 27..63
+    static constexpr uint8_t PANEL_NAME_Y   = 28u;  // FONT_TEXT (11px) -> 28..38
+    static constexpr uint8_t PANEL_VAL_Y    = 40u;  // FONT_NAME (17px) -> 40..56
+    // The panel carries the pickup tick in the grid's arrangement -- the mark sitting on
+    // the bar it is read against -- so a player who has read one gauge can read the other
+    // without learning a second kind of mark. Row 56 is the value's last, so the tick
+    // takes 57..58 and the gauge gives up the pixel to make room for it.
+    static constexpr uint8_t PANEL_PICKUP_Y = 57u;  // -> 57..58, PICKUP_H tall
+    static constexpr uint8_t PANEL_GAUGE_Y  = 59u;
+    static constexpr uint8_t PANEL_GAUGE_H  = 5u;   // -> 59..63, flush to the bottom edge
 
     // The ± glyph occupies the slot just past '~' in every font.
     static constexpr char GLYPH_PM = (char)0x7F;
@@ -263,6 +278,7 @@ private:
     char     m_panel_name[16] = {};
     char     m_panel_val [16] = {};
     uint16_t m_panel_bar = NO_BAR;
+    uint16_t m_panel_pickup = NO_BAR;
     char     m_banner[32] = {};
     bool     m_banner_bottom = false;
 
