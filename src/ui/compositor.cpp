@@ -110,6 +110,16 @@ void Compositor::rect_outline(uint8_t x, uint8_t y, uint8_t w, uint8_t h)
 }
 
 // Small filled triangle: 5 wide, 3 tall, centered on cx; apex up or down.
+// One statement of where the tick goes, for both the 28px grid column and the 120px
+// panel: the pot's position across the track, inset by the tick's own width so full scale
+// stops at the track's right end instead of overhanging it.
+void Compositor::draw_pickup_tick(uint8_t x0, uint8_t track_w, uint8_t y, uint16_t pot)
+{
+    const uint8_t span = (uint8_t)(track_w > PICKUP_W ? track_w - PICKUP_W : 0u);
+    const uint8_t off  = (uint8_t)(((uint32_t)gauge_of(pot) * span) / 127u);
+    display::fill_rect((uint8_t)(x0 + off), y, PICKUP_W, PICKUP_H, true);
+}
+
 void Compositor::draw_tri(uint8_t cx, uint8_t y, bool up)
 {
     for (uint8_t r = 0; r < 3u; ++r) {
@@ -280,12 +290,9 @@ void Compositor::draw_param_grid()
         // A knob waiting to be picked up: a tick above the gauge marking where the pot
         // is pointing. The value stays where it is until the pot crosses it, so the gap
         // between tick and bar end is exactly how much further there is to turn.
-        if (m_param_pickup[i] != NO_BAR) {
-            const uint8_t track = (uint8_t)(w - 4u);
-            const uint8_t span  = (uint8_t)(track > PICKUP_W ? track - PICKUP_W : 0u);
-            const uint8_t off   = (uint8_t)(((uint32_t)gauge_of(m_param_pickup[i]) * span) / 127u);
-            display::fill_rect((uint8_t)(x0 + 2u + off), PICKUP_Y, PICKUP_W, PICKUP_H, true);
-        }
+        if (m_param_pickup[i] != NO_BAR)
+            draw_pickup_tick((uint8_t)(x0 + 2u), (uint8_t)(w - 4u), PICKUP_Y,
+                             m_param_pickup[i]);
 
         char val[16];
         to_display(val, m_param_val[i], sizeof(val) - 1u, true);
@@ -422,6 +429,13 @@ void Compositor::draw_focus_panel(uint16_t prog)
         to_display(cv, m_panel_val, sizeof(cv) - 1u, false);
         draw_centered(display::FONT_NAME, 0, OLED_WIDTH, PANEL_VAL_Y, cv);
     }
+
+    // The knob that popped this panel is still waiting to be picked up: the same tick the
+    // grid draws, over the panel's wider track. It waits for the blind to clear both of
+    // its rows -- like the text, and unlike the gauge, which grows out from under the edge
+    // -- so the mark and the bar it is read against arrive together.
+    if (m_panel_pickup != NO_BAR && bottom >= PANEL_PICKUP_Y + PICKUP_H)
+        draw_pickup_tick(4, (uint8_t)(OLED_WIDTH - 8u), PANEL_PICKUP_Y, m_panel_pickup);
 
     // Below 3px the outline swallows the fill and the gauge reads as a plain line.
     if (m_panel_bar != NO_BAR && bottom >= PANEL_GAUGE_Y + 3u) {
@@ -685,13 +699,15 @@ void Compositor::show_message(const char* msg, MsgPos pos)
     m_pacer.overlay(FramePacer::Overlay::Banner, systick::now_ms());
 }
 
-void Compositor::show_param_change(const char* name, const char* value, uint16_t bar)
+void Compositor::show_param_change(const char* name, const char* value, uint16_t bar,
+                                   uint16_t pickup)
 {
     strncpy(m_panel_name, name, sizeof(m_panel_name) - 1);
     m_panel_name[sizeof(m_panel_name) - 1] = '\0';
     strncpy(m_panel_val, value, sizeof(m_panel_val) - 1);
     m_panel_val[sizeof(m_panel_val) - 1] = '\0';
-    m_panel_bar = bar;
+    m_panel_bar    = bar;
+    m_panel_pickup = pickup;
     m_pacer.overlay(FramePacer::Overlay::Panel, systick::now_ms());
 }
 
