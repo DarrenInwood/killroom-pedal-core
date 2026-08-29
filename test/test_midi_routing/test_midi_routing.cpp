@@ -31,7 +31,7 @@ static Block sample_block(void) {
     b.pc_offset     = 1u;
     b.clock_out     = true;
     b.clock_thru    = false;
-    b.usb_din_route = wr::usb_din::BOTH;
+    b.usb_jack_route = wr::usb_jack::BOTH;
     b.rx_pc         = false;
     b.rx_sysex      = false;
     b.tx_params     = false;
@@ -49,7 +49,7 @@ void test_all_twelve_fields_arrive_named(void) {
     TEST_ASSERT_TRUE(s.config.omni);
     TEST_ASSERT_EQUAL_UINT8(11u, s.config.tx_channel);
     TEST_ASSERT_EQUAL_INT((int)midi_handler::OutMode::Thru, (int)s.config.out_mode);
-    TEST_ASSERT_EQUAL_INT((int)midi_handler::UsbDinRoute::Both, (int)s.config.usb_din);
+    TEST_ASSERT_EQUAL_INT((int)midi_handler::UsbJackRoute::Both, (int)s.config.usb_jack);
     TEST_ASSERT_FALSE(s.config.clock_thru);
     TEST_ASSERT_FALSE(s.config.rx_pc);
     TEST_ASSERT_FALSE(s.config.rx_sysex);
@@ -73,7 +73,7 @@ void test_the_block_round_trips_through_the_settings(void) {
     TEST_ASSERT_EQUAL_UINT8(sent.pc_offset, got.pc_offset);
     TEST_ASSERT_EQUAL_INT(sent.clock_out, got.clock_out);
     TEST_ASSERT_EQUAL_INT(sent.clock_thru, got.clock_thru);
-    TEST_ASSERT_EQUAL_UINT8(sent.usb_din_route, got.usb_din_route);
+    TEST_ASSERT_EQUAL_UINT8(sent.usb_jack_route, got.usb_jack_route);
     TEST_ASSERT_EQUAL_INT(sent.rx_pc, got.rx_pc);
     TEST_ASSERT_EQUAL_INT(sent.rx_sysex, got.rx_sysex);
     TEST_ASSERT_EQUAL_INT(sent.tx_params, got.tx_params);
@@ -117,7 +117,7 @@ void test_a_default_block_is_a_default_configuration(void) {
     TEST_ASSERT_EQUAL_INT(d.omni, s.config.omni);
     TEST_ASSERT_EQUAL_UINT8(d.tx_channel, s.config.tx_channel);
     TEST_ASSERT_EQUAL_INT((int)d.out_mode, (int)s.config.out_mode);
-    TEST_ASSERT_EQUAL_INT((int)d.usb_din, (int)s.config.usb_din);
+    TEST_ASSERT_EQUAL_INT((int)d.usb_jack, (int)s.config.usb_jack);
     TEST_ASSERT_EQUAL_INT(d.clock_thru, s.config.clock_thru);
     TEST_ASSERT_EQUAL_INT(d.rx_pc, s.config.rx_pc);
     TEST_ASSERT_EQUAL_INT(d.rx_sysex, s.config.rx_sysex);
@@ -132,12 +132,12 @@ void test_a_default_block_is_a_default_configuration(void) {
 void test_an_out_of_range_mode_clamps_to_its_default(void) {
     Block b;
     b.out           = wr::out_mode::COUNT;        // one past the last
-    b.usb_din_route = 99u;
+    b.usb_jack_route = 99u;
     b.tx            = wr::tx_state::COUNT;
     const Settings s = from_wire(b);
 
     TEST_ASSERT_EQUAL_INT((int)midi_handler::OutMode::Merge, (int)s.config.out_mode);
-    TEST_ASSERT_EQUAL_INT((int)midi_handler::UsbDinRoute::Off, (int)s.config.usb_din);
+    TEST_ASSERT_EQUAL_INT((int)midi_handler::UsbJackRoute::Off, (int)s.config.usb_jack);
     TEST_ASSERT_EQUAL_UINT8(wr::tx_state::OFF, s.tx_state);
 }
 
@@ -163,9 +163,9 @@ void test_every_legal_mode_survives_the_trip(void) {
         Block b; b.out = m;
         TEST_ASSERT_EQUAL_UINT8(m, to_wire(from_wire(b)).out);
     }
-    for (uint8_t r = 0; r < wr::usb_din::COUNT; ++r) {
-        Block b; b.usb_din_route = r;
-        TEST_ASSERT_EQUAL_UINT8(r, to_wire(from_wire(b)).usb_din_route);
+    for (uint8_t r = 0; r < wr::usb_jack::COUNT; ++r) {
+        Block b; b.usb_jack_route = r;
+        TEST_ASSERT_EQUAL_UINT8(r, to_wire(from_wire(b)).usb_jack_route);
     }
     for (uint8_t t = 0; t < wr::tx_state::COUNT; ++t) {
         Block b; b.tx = t;

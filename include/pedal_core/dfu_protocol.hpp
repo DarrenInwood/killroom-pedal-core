@@ -19,7 +19,7 @@
 //     F0 <mfr> <dev> 01 [uid12, 7-bit packed as 14 bytes] F7
 //
 //   The address is not optional. Over USB the command reaches one port and one
-//   pedal, but over DIN every pedal downstream sees every byte, and two of a
+//   pedal, but over the jack every pedal downstream sees every byte, and two of a
 //   model answer to the same device byte -- so an unaddressed reboot would put
 //   a whole chain into DFU at once, and recovering them one at a time is worse
 //   than not rebooting them. CMD_IDENTIFY is how a host tells apart the ones
@@ -62,7 +62,7 @@ inline constexpr uint8_t CMD_FW_END           = 0x03u;
 //
 // Request and reply share the command byte and are told apart by payload length: a
 // device never sends an empty 0x04 and a host never sends a non-empty one. That
-// asymmetry is load-bearing on a DIN chain, where a pedal sees the replies of every
+// asymmetry is load-bearing on a MIDI chain, where a pedal sees the replies of every
 // other pedal on the wire — without it, one identify request would start a reply storm.
 inline constexpr uint8_t CMD_IDENTIFY          = 0x04u;
 inline constexpr uint8_t CMD_FW_BEGIN         = 0x05u;

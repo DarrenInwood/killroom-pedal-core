@@ -6,8 +6,9 @@ that code, docs, issues and conversations all use the same one. Definitions say 
 
 A term earns a place here when it is genuinely the library's own: a concept every product in the
 family shares, and none of them owns. A term that only makes sense for one pedal belongs in that
-pedal's glossary. *Edit Buffer* and *Slot* are the multi-effect's, and are defined
-[there](https://github.com/DarrenInwood/killroom-analog-multi-effect/blob/main/CONTEXT.md).
+pedal's glossary. *Edit Buffer*, *Slot* and *MIDI Jack* are the multi-effect's, and are defined
+[there](https://github.com/DarrenInwood/killroom-analog-multi-effect/blob/main/CONTEXT.md) —
+*MIDI Jack* being the port this library routes, whatever connector a product fits to it.
 
 ## Language
 
@@ -85,13 +86,13 @@ _Avoid_: header, manifest, firmware header
 
 ### MIDI
 
-**The DIN Out router**:
-What arbitrates the DIN Out jack between the three things that want it: the inbound stream being
-echoed, the other transport being cross-routed, and the pedal's own traffic. It exists because
-only System Real-Time bytes may appear inside another message, so everything else has to leave
-the jack whole — a message contending with a frame already streaming waits rather than splicing
-into it.
-_Avoid_: MIDI thru, merger, mixer
+**The MIDI Out router**:
+What arbitrates the MIDI Out jack between the three things that want it: the inbound stream
+being echoed, the other transport being cross-routed, and the pedal's own traffic. It exists
+because only System Real-Time bytes may appear inside another message, so everything else has to
+leave the jack whole — a message contending with a frame already streaming waits rather than
+splicing into it.
+_Avoid_: DIN Out router, MIDI thru, merger, mixer
 
 **Carries-policy**:
 Whether a given source's traffic reaches a given jack at all, for the current routing. A

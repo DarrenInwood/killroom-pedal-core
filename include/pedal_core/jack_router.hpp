@@ -1,9 +1,9 @@
 #pragma once
 #include <cstdint>
 #include "hal.hpp"           // uart::write
-#include "midi_handler.hpp"  // Config, OutMode, UsbDinRoute
+#include "midi_handler.hpp"  // Config, OutMode, UsbJackRoute
 
-// The DIN Out router: what arbitrates the DIN Out jack between the three things that
+// The MIDI Out router: what arbitrates the MIDI Out jack between the three things that
 // want it -- the inbound stream being echoed, the other transport being cross-routed,
 // and the pedal's own traffic.
 //
@@ -18,11 +18,11 @@
 // byte stream to fake.
 namespace pedal_core {
 
-class DinRouter {
+class JackRouter {
 public:
     // Which stream a byte belongs to. `Self` is the pedal's own outbound traffic, which
     // contends for the jack exactly as the two inbound streams contend with each other.
-    enum class Src : uint8_t { Uart, Usb, Self };
+    enum class Src : uint8_t { Jack, Usb, Self };
 
     // The routing settings. Also forgets which status byte is on the wire: running status
     // is a claim about what the device downstream has already been told, and a routing
@@ -43,34 +43,34 @@ public:
     // that surprise people, and a truth table is the shape they read in. Everything below
     // consults them, so they are never the whole of what a suite covers.
 
-    // Does this source's traffic reach the DIN jack at all?
+    // Does this source's traffic reach the MIDI jack at all?
     bool carries(Src src) const
     {
         using midi_handler::OutMode;
-        using midi_handler::UsbDinRoute;
+        using midi_handler::UsbJackRoute;
         switch (src) {
-            case Src::Uart:
+            case Src::Jack:
                 return m_config.out_mode == OutMode::Merge || m_config.out_mode == OutMode::Thru;
             case Src::Usb:
                 return (m_config.out_mode == OutMode::Merge || m_config.out_mode == OutMode::Thru)
-                    && (m_config.usb_din == UsbDinRoute::UsbToDin
-                        || m_config.usb_din == UsbDinRoute::Both);
+                    && (m_config.usb_jack == UsbJackRoute::UsbToJack
+                        || m_config.usb_jack == UsbJackRoute::Both);
             case Src::Self:
             default:
                 return m_config.out_mode == OutMode::Merge || m_config.out_mode == OutMode::Out;
         }
     }
 
-    // Does an inbound System Real-Time byte reach the DIN jack?
+    // Does an inbound System Real-Time byte reach the MIDI jack?
     bool carries_realtime(Src src, uint8_t status) const
     {
         using midi_handler::OutMode;
-        using midi_handler::UsbDinRoute;
+        using midi_handler::UsbJackRoute;
 
         if (m_config.out_mode == OutMode::Off) return false;
         if (src == Src::Usb
-            && m_config.usb_din != UsbDinRoute::UsbToDin
-            && m_config.usb_din != UsbDinRoute::Both)
+            && m_config.usb_jack != UsbJackRoute::UsbToJack
+            && m_config.usb_jack != UsbJackRoute::Both)
             return false;
 
         // Active Sensing describes one link, not the stream on it: forwarding it makes a
@@ -94,10 +94,10 @@ public:
     // though the writing is the caller's.
     bool usb_carries(Src src) const
     {
-        using midi_handler::UsbDinRoute;
-        return src == Src::Uart
-            && (m_config.usb_din == UsbDinRoute::DinToUsb
-                || m_config.usb_din == UsbDinRoute::Both);
+        using midi_handler::UsbJackRoute;
+        return src == Src::Jack
+            && (m_config.usb_jack == UsbJackRoute::JackToUsb
+                || m_config.usb_jack == UsbJackRoute::Both);
     }
 
     // --- traffic ---------------------------------------------------------------
@@ -160,7 +160,7 @@ public:
 
     // Has the frame holding the jack stopped coming?
     //
-    // A DIN sender is a UART pushing bytes 320 us apart and a host's packets are far
+    // A jack sender is a UART pushing bytes 320 us apart and a host's packets are far
     // closer together than this, so only a frame that has stopped trips it -- an unplugged
     // cable mid-dump being the case that matters. Without it the lock outlives the frame
     // and the pedal's own output is silent until a fresh status byte arrives on that
@@ -246,7 +246,7 @@ private:
     bool     m_generating_clock = false;
 
     bool     m_locked  = false;
-    Src      m_owner   = Src::Uart;
+    Src      m_owner   = Src::Jack;
     // The last channel status actually written to the jack.
     uint8_t  m_running = 0u;
     uint32_t m_fed_ms  = 0u;     // when the owning frame last produced a byte

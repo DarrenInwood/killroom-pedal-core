@@ -1,5 +1,5 @@
 #include <pedal_core/midi_handler.hpp>
-#include <pedal_core/din_router.hpp>
+#include <pedal_core/jack_router.hpp>
 #include <pedal_core/hal.hpp>
 #include "pedal_core_ui_config.hpp"   // SYSEX_RX_BUF
 
@@ -26,16 +26,16 @@ static midi_handler::Config s_config;
 static const uint8_t* s_sysex_always     = nullptr;
 static uint8_t        s_sysex_always_len = 0;
 
-// The DIN Out jack's arbiter: the lock a streaming frame takes, the queue a contending
+// The MIDI Out jack's arbiter: the lock a streaming frame takes, the queue a contending
 // message waits in, the running-status hold, the stall timeout, and the policy deciding
 // whether a source reaches a jack at all. It holds its own copy of the routing settings
 // -- the fields it reads and the ones the parser below reads are disjoint -- so it can be
-// stood up and driven on its own. See test_din_router.
-static pedal_core::DinRouter s_router;
-using Src = pedal_core::DinRouter::Src;
+// stood up and driven on its own. See test_jack_router.
+static pedal_core::JackRouter s_router;
+using Src = pedal_core::JackRouter::Src;
 
 // Running-status parser, one per transport so an interleaved USB message can
-// never corrupt a half-received DIN message.
+// never corrupt a half-received jack message.
 struct Parser {
     uint8_t status = 0;
     uint8_t data[2];
@@ -49,10 +49,10 @@ struct Parser {
     uint16_t sysex_len      = 0;
     bool     in_sysex       = false;
     bool     sysex_overflow = false;  // the frame outgrew the buffer
-    bool     sysex_to_din   = false;  // this frame won the DIN jack and is streaming out
+    bool     sysex_to_jack   = false;  // this frame won the MIDI jack and is streaming out
 };
 
-static Parser s_uart_parser;
+static Parser s_jack_parser;
 static Parser s_usb_parser;
 
 static uint8_t expected_data_bytes(uint8_t status)
@@ -138,7 +138,7 @@ static void dispatch_sysex(Parser& p)
     p.sysex_overflow = false;
 }
 
-// The DIN half is the router's, which decides for itself whether this source reaches
+// The jack half is the router's, which decides for itself whether this source reaches
 // the jack; the USB half is one write behind the same policy object.
 static void route_realtime(Src src, uint8_t status)
 {
@@ -170,16 +170,16 @@ static void feed_byte(Parser& p, uint8_t byte, Src src)
         p.sysex_overflow = false;
         p.sysex_buf[p.sysex_len++] = byte;
         const uint32_t now = systick::now_ms();
-        p.sysex_to_din = s_router.carries(src) && s_router.sysex_begin(src, now);
-        if (p.sysex_to_din) s_router.sysex_byte(byte, now);
+        p.sysex_to_jack = s_router.carries(src) && s_router.sysex_begin(src, now);
+        if (p.sysex_to_jack) s_router.sysex_byte(byte, now);
         return;
     }
     if (p.in_sysex) {
         if (byte == 0xF7) {                 // EOX -- complete and dispatch the SysEx
             if (p.sysex_len < Parser::SYSEX_BUF) p.sysex_buf[p.sysex_len++] = byte;
             else                                 p.sysex_overflow = true;
-            if (p.sysex_to_din) { s_router.sysex_end(src, true); p.sysex_to_din = false; }
-            // A frame is forwarded to DIN byte by byte but reaches USB whole, so one
+            if (p.sysex_to_jack) { s_router.sysex_end(src, true); p.sysex_to_jack = false; }
+            // A frame is forwarded to the jack byte by byte but reaches USB whole, so one
             // that outgrew the receive buffer cannot be forwarded there.
             if (s_router.usb_carries(src) && !p.sysex_overflow)
                 usb_midi::send_sysex(p.sysex_buf, p.sysex_len);
@@ -189,7 +189,7 @@ static void feed_byte(Parser& p, uint8_t byte, Src src)
         if (byte < 0x80) {                  // SysEx data byte
             if (p.sysex_len < Parser::SYSEX_BUF) p.sysex_buf[p.sysex_len++] = byte;
             else                                 p.sysex_overflow = true;
-            if (p.sysex_to_din) s_router.sysex_byte(byte, systick::now_ms());
+            if (p.sysex_to_jack) s_router.sysex_byte(byte, systick::now_ms());
             return;
         }
         // Any other status byte aborts the SysEx (MIDI spec: only real-time may
@@ -197,7 +197,7 @@ static void feed_byte(Parser& p, uint8_t byte, Src src)
         // forwarded frame with an EOX so the downstream parser is not left holding
         // a frame that never ends, then fall through to parse this byte as a fresh
         // status rather than silently swallowing it and the rest of the message.
-        if (p.sysex_to_din) { s_router.sysex_end(src, true); p.sysex_to_din = false; }
+        if (p.sysex_to_jack) { s_router.sysex_end(src, true); p.sysex_to_jack = false; }
         p.in_sysex       = false;
         p.sysex_len      = 0;
         p.sysex_overflow = false;
@@ -242,10 +242,10 @@ void midi_handler::init(uint8_t channel, bool omni)
     s_config.channel = channel;
     s_config.omni    = omni;
 
-    s_uart_parser = Parser{};
+    s_jack_parser = Parser{};
     s_usb_parser  = Parser{};
 
-    s_router = pedal_core::DinRouter{};
+    s_router = pedal_core::JackRouter{};
     s_router.set_config(s_config);
 
     s_sysex_always     = nullptr;
@@ -255,7 +255,7 @@ void midi_handler::init(uint8_t channel, bool omni)
 void midi_handler::update()
 {
     uint8_t byte;
-    while (uart::read(byte))     feed_byte(s_uart_parser, byte, Src::Uart);
+    while (uart::read(byte))     feed_byte(s_jack_parser, byte, Src::Jack);
     while (usb_midi::read(byte)) feed_byte(s_usb_parser,  byte, Src::Usb);
 
     // A frame that stopped coming has to give the jack back, or everything the
@@ -266,10 +266,10 @@ void midi_handler::update()
     // The local parse is deliberately left alone: a host that merely paused still
     // gets its frame understood when it resumes. Only the pass-through copy --
     // already truncated downstream by the silence -- is abandoned.
-    Src stalled_owner = Src::Uart;
+    Src stalled_owner = Src::Jack;
     if (s_router.poll(systick::now_ms(), stalled_owner)) {
-        Parser& p = (stalled_owner == Src::Usb) ? s_usb_parser : s_uart_parser;
-        p.sysex_to_din = false;
+        Parser& p = (stalled_owner == Src::Usb) ? s_usb_parser : s_jack_parser;
+        p.sysex_to_jack = false;
     }
 }
 
@@ -283,7 +283,7 @@ void midi_handler::set_config(const Config& cfg)
 {
     s_config = cfg;
     // The router forgets the status byte on the wire as it takes the new settings; see
-    // DinRouter::set_config() for why a routing change has to re-state it.
+    // JackRouter::set_config() for why a routing change has to re-state it.
     s_router.set_config(s_config);
 }
 const midi_handler::Config& midi_handler::get_config() { return s_config; }

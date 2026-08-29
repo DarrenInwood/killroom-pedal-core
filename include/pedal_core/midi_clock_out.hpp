@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-// MIDI clock generation: 24 pulses per quarter note out of the DIN jack, so a
+// MIDI clock generation: 24 pulses per quarter note out of the MIDI jack, so a
 // tempo tapped on this pedal reaches the delay below it in the chain.
 //
 // The product owns the two facts this cannot know — the tempo, and whether the
@@ -16,7 +16,7 @@
 // Falling a whole interval behind resynchronises instead, losing a tick rather
 // than sending two together.
 //
-// It runs from the caller's loop, not from a timer interrupt: the DIN writer is
+// It runs from the caller's loop, not from a timer interrupt: the jack writer is
 // a single-producer ring that spins when full, so a high-priority interrupt
 // writing to it would both race the loop and deadlock against the transmit
 // interrupt that drains it. The cost is that tick spacing carries whatever

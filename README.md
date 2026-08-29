@@ -2,7 +2,7 @@
 
 Shared firmware core for a family of guitar pedals built on the same control
 surface: a 128×64 monochrome OLED, a 25xx-class SPI EEPROM preset store,
-10-bit parameters at every layer, and MIDI over USB and DIN.
+10-bit parameters at every layer, and MIDI over USB and a MIDI jack.
 
 Consumers pull this repo in as a git submodule under `firmware/lib/pedal-core`;
 PlatformIO's library dependency finder picks it up from there via
@@ -23,7 +23,7 @@ PlatformIO's library dependency finder picks it up from there via
 | `pedal_core/font.hpp` + `font_data.*` | header + data | The family's variable-width OLED fonts; regenerate with [tools/gen_fonts.py](tools/gen_fonts.py) |
 | `pedal_core/eeprom.*` | protocol driver | 25xx, 16-bit address (25LC256 / 25LC512): page-bounded writes at the product's page size, boot health probe, and a RAM-mirror fallback sized by the product — whole-map where it fits, header + system blocks + one record window where it does not |
 | `pedal_core/display.*` | protocol driver | SSD1309 / SSD1306 / ST7567 framebuffer driver with pixel-precise text, gauges, `invert_region`, slide composition |
-| `pedal_core/din_router.hpp` | pure header | The DIN Out router: the lock a streaming frame takes, the queue behind it, the running-status hold, the stall timeout, and the policy saying which source reaches which jack |
+| `pedal_core/jack_router.hpp` | pure header | The MIDI Out router: the lock a streaming frame takes, the queue behind it, the running-status hold, the stall timeout, and the policy saying which source reaches which jack |
 | `pedal_core/sysex_codec.hpp` | pure header | Roland-style 7-bit SysEx packing and CRC32 — the firmware-update codec |
 | `pedal_core/dfu_protocol.hpp` | pure header | The DFU-over-SysEx wire contract: command bytes and status codes |
 | `pedal_core/dfu_session.hpp` | pure header | The DFU write session — chunk decode, bounds checks, erase/write sequencing, image verify — with flash behind a three-function seam |

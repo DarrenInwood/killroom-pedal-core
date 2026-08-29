@@ -258,7 +258,7 @@ void test_note_off_status_byte_dispatches(void) {
 }
 
 // ---------------------------------------------------------------------------
-// The DIN Out router
+// The MIDI Out router
 // ---------------------------------------------------------------------------
 
 // Merge is the default and carries both directions; the other three each drop
@@ -369,9 +369,9 @@ void test_active_sensing_is_never_forwarded(void) {
 // ---------------------------------------------------------------------------
 // Cross-routing: the pedal as a MIDI interface
 // ---------------------------------------------------------------------------
-void test_din_to_usb_forwards_messages_and_frames(void) {
+void test_jack_to_usb_forwards_messages_and_frames(void) {
     midi_handler::Config c = midi_handler::get_config();
-    c.usb_din = midi_handler::UsbDinRoute::DinToUsb;
+    c.usb_jack = midi_handler::UsbJackRoute::JackToUsb;
     midi_handler::set_config(c);
 
     feed_uart({0xB0, 0x07, 0x40});
@@ -382,12 +382,12 @@ void test_din_to_usb_forwards_messages_and_frames(void) {
     TEST_ASSERT_EQUAL_INT(5, (int)usb_midi::g_tx_sysex[0].size());
 }
 
-void test_usb_to_din_needs_the_route_and_an_echoing_out_mode(void) {
+void test_usb_to_jack_needs_the_route_and_an_echoing_out_mode(void) {
     feed_usb({0xB0, 0x07, 0x40});
     TEST_ASSERT_EQUAL_INT(0, (int)uart::g_thru.size());   // Off by default
 
     midi_handler::Config c = midi_handler::get_config();
-    c.usb_din = midi_handler::UsbDinRoute::UsbToDin;
+    c.usb_jack = midi_handler::UsbJackRoute::UsbToJack;
     midi_handler::set_config(c);
     feed_usb({0xB0, 0x07, 0x40});
     TEST_ASSERT_EQUAL_INT(3, (int)uart::g_thru.size());
@@ -770,7 +770,7 @@ void test_the_gap_between_the_two_changes_nothing(void) {
     const std::vector<std::string> together = g_order;
 
     g_order.clear(); g_pc.clear(); g_cc.clear();
-    s_uart_parser = Parser{};
+    s_jack_parser = Parser{};
     feed_uart({0xC0, 0x05});                        // and split across two
     feed_uart({0xB0, 14u, 127u});
 
@@ -824,8 +824,8 @@ int main(int, char**) {
     RUN_TEST(test_a_changed_status_is_restated);
     RUN_TEST(test_clock_thru_off_stops_forwarding_the_clock_family);
     RUN_TEST(test_active_sensing_is_never_forwarded);
-    RUN_TEST(test_din_to_usb_forwards_messages_and_frames);
-    RUN_TEST(test_usb_to_din_needs_the_route_and_an_echoing_out_mode);
+    RUN_TEST(test_jack_to_usb_forwards_messages_and_frames);
+    RUN_TEST(test_usb_to_jack_needs_the_route_and_an_echoing_out_mode);
     RUN_TEST(test_rx_pc_off_drops_program_change_but_forwards_it);
     RUN_TEST(test_rx_sysex_off_drops_frames_but_keeps_the_named_commands);
     RUN_TEST(test_tx_channel_follows_rx_until_one_is_set);

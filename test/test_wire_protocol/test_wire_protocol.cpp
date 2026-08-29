@@ -412,7 +412,7 @@ void test_preset_rejects_an_unrelated_command(void) {
 
 // --- addressing by unit -----------------------------------------------------
 //
-// A pedal must reboot into DFU only when the command names it. Over DIN every
+// A pedal must reboot into DFU only when the command names it. Over the jack every
 // pedal downstream sees every byte and two of a model share a device byte, so
 // an unaddressed reboot would take a whole chain down at once.
 
@@ -497,7 +497,7 @@ static GlobalView sample_global(void) {
     g.routing.pc_offset = 1u;
     g.routing.clock_out = true;
     g.routing.clock_thru = false;
-    g.routing.usb_din_route = midi_routing::usb_din::BOTH;
+    g.routing.usb_jack_route = midi_routing::usb_jack::BOTH;
     g.routing.rx_pc = false;
     g.routing.rx_sysex = false;
     g.routing.tx_params = false;
@@ -549,7 +549,7 @@ void test_global_routing_block_round_trips_every_field(void) {
     TEST_ASSERT_EQUAL_UINT8(1u,  got.routing.pc_offset);
     TEST_ASSERT_TRUE(got.routing.clock_out);
     TEST_ASSERT_FALSE(got.routing.clock_thru);
-    TEST_ASSERT_EQUAL_UINT8(midi_routing::usb_din::BOTH, got.routing.usb_din_route);
+    TEST_ASSERT_EQUAL_UINT8(midi_routing::usb_jack::BOTH, got.routing.usb_jack_route);
     TEST_ASSERT_FALSE(got.routing.rx_pc);
     TEST_ASSERT_FALSE(got.routing.rx_sysex);
     TEST_ASSERT_FALSE(got.routing.tx_params);
