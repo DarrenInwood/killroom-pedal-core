@@ -166,6 +166,28 @@ void test_the_save_confirmation_is_a_still_frame_held_for_the_dwell(void) {
     TEST_ASSERT_EQUAL_INT((int)What::Frame,     (int)p.decide(t + DWELL_MS, false).what);
 }
 
+// A transient opened mid-tick is stamped LATER than the timestamp the frame is drawn with:
+// a product's superloop samples `now` once, ticks (which is where show_saved() and friends
+// run), then draws with the `now` it sampled before. The overlay's start is then a
+// millisecond or two in the future, and an unsigned subtraction reads that as ~4.29 billion
+// ms elapsed — past every dwell, so the transient is retired without ever being drawn. On a
+// pedal this loses the save confirmation outright, because it is opened exactly once; the
+// focus panel survives only because a knob turn re-opens it on tick after tick.
+void test_a_transient_stamped_mid_tick_still_gets_its_dwell(void) {
+    for (uint32_t skew = 1u; skew <= 3u; ++skew) {
+        uint32_t t = 100000u; FramePacer p = settled(t);
+        p.overlay(Overlay::Save, t + skew);          // show_saved() ran skew ms into the tick
+
+        // Drawn on the stale timestamp rather than thrown away.
+        TEST_ASSERT_EQUAL_INT((int)What::FrameSave, (int)p.decide(t, false).what);
+        // And it still stands for its whole dwell, measured from when it opened.
+        TEST_ASSERT_EQUAL_INT((int)What::FrameSave,
+                              (int)p.decide(t + skew + DWELL_MS - 1u, false).what);
+        TEST_ASSERT_EQUAL_INT((int)What::Frame,
+                              (int)p.decide(t + skew + DWELL_MS, false).what);
+    }
+}
+
 // The splash animates for its hold and then gives the screen up.
 void test_the_splash_animates_for_its_hold(void) {
     uint32_t t = 1000u;
@@ -311,6 +333,7 @@ int main(int, char**) {
     RUN_TEST(test_reopening_the_panel_does_not_replay_the_unroll);
     RUN_TEST(test_a_banner_is_paced_like_the_panel);
     RUN_TEST(test_the_save_confirmation_is_a_still_frame_held_for_the_dwell);
+    RUN_TEST(test_a_transient_stamped_mid_tick_still_gets_its_dwell);
     RUN_TEST(test_the_splash_animates_for_its_hold);
     RUN_TEST(test_the_splash_suppresses_the_screen_underneath);
     RUN_TEST(test_a_faulted_boot_runs_the_fault_then_the_splash);

@@ -109,6 +109,21 @@ public:
         return had_overlay ? SlideStart::RedrawFirst : SlideStart::Ready;
     }
 
+    // Milliseconds from `then` to `now`, and zero when `then` has not been reached yet.
+    //
+    // A product's superloop samples the timestamp it draws with BEFORE the tick that may
+    // open a transient, so a transient opened mid-tick is stamped a millisecond or two
+    // ahead of the frame that first gets the chance to draw it. Plain unsigned subtraction
+    // turns that small negative into ~4.29 billion, which is past every dwell here, and the
+    // transient is retired before one frame of it reaches the glass. Reading the difference
+    // as signed says "not yet", which is the truth. It is also what keeps the millisecond
+    // counter's 49.7-day wrap from expiring a transient the instant it opens.
+    static uint32_t since(uint32_t now, uint32_t then)
+    {
+        const int32_t d = (int32_t)(now - then);
+        return (d > 0) ? (uint32_t)d : 0u;
+    }
+
     // --- what this tick should do -------------------------------------------
 
     Decision decide(uint32_t now, bool display_busy)
@@ -120,11 +135,11 @@ public:
         if (m_splash_expiry_ms != 0u) {
             if (now < m_splash_expiry_ms) {
                 // Animate the splash at the overlay cadence; a static hold just waits.
-                if (m_splash_active && (uint32_t)(now - m_last_draw_ms) >= ANIM_FRAME_MS
+                if (m_splash_active && since(now, m_last_draw_ms) >= ANIM_FRAME_MS
                         && !display_busy) {
                     m_last_draw_ms = now;
                     d.what = What::SplashFrame;
-                    d.arg  = (uint32_t)(now - m_splash_start_ms);
+                    d.arg  = since(now, m_splash_start_ms);
                 }
                 return d;
             }
@@ -147,8 +162,8 @@ public:
             d.capture_slide_target = true;
         }
         if (m_slide_active) {
-            const uint32_t elapsed = (uint32_t)(now - m_slide_start_ms);
-            if (elapsed < SLIDE_MS && (uint32_t)(now - m_last_draw_ms) < ANIM_FRAME_MS) return d;
+            const uint32_t elapsed = since(now, m_slide_start_ms);
+            if (elapsed < SLIDE_MS && since(now, m_last_draw_ms) < ANIM_FRAME_MS) return d;
             if (display_busy) return d;
             m_last_draw_ms = now;
             if (elapsed >= SLIDE_MS) {
@@ -166,7 +181,7 @@ public:
         bool animating = false;
         uint32_t overlay_elapsed = 0u;
         if (m_overlay != Overlay::None) {
-            overlay_elapsed = (uint32_t)(now - m_overlay_start_ms);
+            overlay_elapsed = since(now, m_overlay_start_ms);
             if (overlay_elapsed >= overlay_total()) {
                 m_overlay = Overlay::None;
                 m_dirty   = true;
@@ -179,7 +194,7 @@ public:
         // otherwise idle at the 20 fps cap. Input is polled elsewhere, so a redraw never
         // delays a knob or footswitch.
         const uint32_t cap = animating ? ANIM_FRAME_MS : REFRESH_MS;
-        if (!m_dirty && (uint32_t)(now - m_last_draw_ms) < cap) return d;
+        if (!m_dirty && since(now, m_last_draw_ms) < cap) return d;
         if (display_busy) return d;
 
         m_dirty        = false;
