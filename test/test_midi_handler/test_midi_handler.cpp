@@ -826,6 +826,39 @@ void test_a_forwarded_frame_still_drains_whole(void) {
     TEST_ASSERT_TRUE_MESSAGE(uart::g_rx.empty(), "a forwarded frame was left half-read");
 }
 
+// The budget is one answer a pass whichever transport asks, so the USB drain stops on the
+// same terms as the jack's.
+void test_only_one_usb_sysex_is_answered_per_pass(void) {
+    for (int i = 0; i < 2; ++i)
+        for (int b : { 0xF0, 0x7D, 0x01, 0x70, 0xF7 }) usb_midi::g_rx.push_back((uint8_t)b);
+
+    midi_handler::update();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, (int)g_sysex.size(), "a USB burst was answered in one pass");
+    TEST_ASSERT_TRUE_MESSAGE(!usb_midi::g_rx.empty(), "the second request left the ring");
+
+    midi_handler::update();
+    TEST_ASSERT_EQUAL_INT(2, (int)g_sysex.size());
+    TEST_ASSERT_TRUE(usb_midi::g_rx.empty());
+}
+
+// A pass that spends its budget on the jack must leave the USB ring exactly where it was.
+// A byte read without being parsed is gone for good, and the loss is not one message: the
+// running status it carried is what every message behind it is read against.
+void test_a_spent_budget_leaves_the_usb_ring_untouched(void) {
+    for (int b : { 0xF0, 0x7D, 0x01, 0x70, 0xF7 }) uart::g_rx.push_back((uint8_t)b);
+    for (int b : { 0xB0, 0x07, 0x40 })             usb_midi::g_rx.push_back((uint8_t)b);
+
+    midi_handler::update();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, (int)g_sysex.size(), "the jack request went unanswered");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(3, (int)usb_midi::g_rx.size(), "a USB byte was read and dropped");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, (int)g_cc.size(), "the USB CC arrived on a spent pass");
+
+    midi_handler::update();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, (int)g_cc.size(), "the USB CC never arrived");
+    TEST_ASSERT_EQUAL_UINT8(0x07, g_cc[0].cc);
+    TEST_ASSERT_EQUAL_UINT8(0x40, g_cc[0].val);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_cc_dispatch_on_matching_channel);
@@ -872,5 +905,7 @@ int main(int, char**) {
     RUN_TEST(test_a_routing_change_restates_the_status);
     RUN_TEST(test_only_one_sysex_is_answered_per_pass);
     RUN_TEST(test_a_forwarded_frame_still_drains_whole);
+    RUN_TEST(test_only_one_usb_sysex_is_answered_per_pass);
+    RUN_TEST(test_a_spent_budget_leaves_the_usb_ring_untouched);
     return UNITY_END();
 }
