@@ -77,6 +77,10 @@ inline constexpr uint8_t SET_NOISE        = 0x23u;
 inline constexpr uint8_t SET_EXT_INPUT    = 0x24u;
 inline constexpr uint8_t SET_SYNC         = 0x25u;
 inline constexpr uint8_t SET_MIDI         = 0x26u;  // the whole routing block; see midi_routing
+// How the pedal's knobs behave when a parameter has moved out from under them:
+// 0 pickup, 1 jump. A device preference, so it belongs beside the other globals
+// rather than in a preset. A device without knobs never answers it.
+inline constexpr uint8_t SET_KNOB_MODE    = 0x27u;
 inline constexpr uint8_t VERSION_REQ      = 0x30u;
 inline constexpr uint8_t VERSION_DATA     = 0x31u;
 inline constexpr uint8_t SET_BPM          = 0x40u;
@@ -171,6 +175,10 @@ inline constexpr uint8_t MIDI_ROUTING = 0x14u;
 // rather than announced, like the rest of this frame — a host that polls the globals
 // sees a player's stomp on its next read.
 inline constexpr uint8_t SCENE_ACTIVE = 0x15u;
+// How the knobs behave when a parameter has moved out from under them: 0 pickup — the
+// knob stays inert until its pot reaches the value — 1 jump, the knob is always live.
+// A host that predates this tag skips it by its length and reads the rest of the frame.
+inline constexpr uint8_t KNOB_MODE    = 0x16u;
 }  // namespace global_tag
 
 // --- the MIDI routing block -------------------------------------------------
