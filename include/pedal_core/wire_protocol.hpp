@@ -552,15 +552,68 @@ struct PresetHead {
     uint8_t  param_count;
 };
 
+// The slot as the wire carries it: a bank and a program, most significant seven bits
+// first. Deliberately not the lo7/hi7 pair u14() writes -- this one is addressed as a bank
+// and a program by every host and controller that speaks Program Change, and the order is
+// theirs rather than this protocol's. Named so the split and the join are one spelling
+// each instead of the same arithmetic written out at both ends of the file.
+constexpr uint8_t slot_bank(uint16_t slot)    { return (uint8_t)((slot >> 7) & 0x7Fu); }
+constexpr uint8_t slot_program(uint16_t slot) { return (uint8_t)(slot & 0x7Fu); }
+constexpr uint16_t slot_of(uint8_t bank, uint8_t program)
+{
+    return (uint16_t)(((uint16_t)(bank & 0x7Fu) << 7) | (uint16_t)(program & 0x7Fu));
+}
+
 inline void write_preset_head(Writer& w, uint8_t device, uint8_t command, const PresetHead& h)
 {
     w.header(device, command);
-    w.u7((uint8_t)((h.slot >> 7) & 0x7Fu));   // bank
-    w.u7((uint8_t)(h.slot & 0x7Fu));          // program
+    w.u7(slot_bank(h.slot));
+    w.u7(slot_program(h.slot));
     w.u7(h.format);
     w.u7(h.algorithm);
     w.u7(h.flags);
     w.u7(h.param_count);
+}
+
+// Everything past the head: the parts that vary between products.
+//
+// The count is NOT here. It is the head's, and the builder writes exactly that many
+// parameters -- a count and a block that disagree is what makes parse_preset read the name
+// out of the parameter block, and PRESET_RESTORE writes that to EEPROM. There is no way to
+// express the disagreement any more.
+struct PresetBody {
+    const uint16_t* params   = nullptr;   // head.param_count values, each written lo7/hi7
+    const char*     name     = nullptr;
+    uint8_t         name_len = 0u;
+    const uint8_t*  tlv      = nullptr;   // a run of whole records, or nothing
+    uint16_t        tlv_len  = 0u;
+};
+
+// Returns the frame length, or 0 if the buffer was too small or the parts do not add up.
+//
+// The counterpart of parse_preset, and the reason the layout between the head and the F7
+// is no longer something every caller lays out from a comment. Drops rather than truncates,
+// like everything else Writer builds: half a preset frame restores as garbage.
+inline uint16_t build_preset(const PresetHead& h, const PresetBody& b,
+                             uint8_t device, uint8_t command, uint8_t* out, uint16_t cap)
+{
+    // Only the two commands parse_preset accepts, so a frame this builds is one it reads.
+    if (command != cmd::PRESET_DUMP_DATA && command != cmd::PRESET_RESTORE) return 0u;
+
+    // A part promised and not supplied is a caller bug, not a short frame: say so rather
+    // than writing a block of zeros a restore would believe.
+    if (h.param_count > 0u && b.params == nullptr) return 0u;
+    if (b.name_len    > 0u && b.name   == nullptr) return 0u;
+    if (b.tlv_len     > 0u && b.tlv    == nullptr) return 0u;
+
+    Writer w(out, cap);
+    write_preset_head(w, device, command, h);
+    for (uint8_t i = 0u; i < h.param_count; ++i) w.u14(b.params[i]);
+    w.u7(b.name_len);
+    w.bytes(reinterpret_cast<const uint8_t*>(b.name), b.name_len);
+    w.bytes(b.tlv, b.tlv_len);
+    w.end();
+    return w.length();
 }
 
 // A parsed frame, pointing into the caller's buffer rather than copying it.
@@ -587,7 +640,7 @@ inline bool parse_preset(const uint8_t* f, uint16_t len, uint8_t device, PresetV
     const uint16_t end = (uint16_t)(len - 1u);   // index of F7
     uint16_t i = 4u;
 
-    out.head.slot        = (uint16_t)((uint16_t)f[i] * 128u + f[i + 1u]);
+    out.head.slot        = slot_of(f[i], f[i + 1u]);
     out.head.format      = f[i + 2u];
     out.head.algorithm   = f[i + 3u];
     out.head.flags       = f[i + 4u];
