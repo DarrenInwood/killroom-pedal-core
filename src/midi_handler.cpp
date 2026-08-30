@@ -256,6 +256,19 @@ void midi_handler::init(uint8_t channel, bool omni)
     s_sysex_dispatched = false;
 }
 
+// Drain one transport into its parser, until it runs dry or the pass spends its reply budget.
+//
+// The budget is tested before the read rather than after it, so a byte taken from a receive
+// ring is always a byte the parser saw. Both transports drain through here because the read
+// and the feed belong to each other: a loop that owns only one of the two can leave a byte
+// consumed and unparsed, and a parser that misses a byte carries the wrong running status
+// for every message after it.
+static void drain(bool (*read)(uint8_t&), Parser& p, Src src)
+{
+    uint8_t byte;
+    while (!s_sysex_dispatched && read(byte)) feed_byte(p, byte, src);
+}
+
 void midi_handler::update()
 {
     // One reply in flight is the whole dispatch budget.
@@ -271,14 +284,8 @@ void midi_handler::update()
     // for. Bounding the count is what the budget was for either way.
     s_sysex_dispatched = false;
 
-    uint8_t byte;
-    while (uart::read(byte)) {
-        feed_byte(s_jack_parser, byte, Src::Jack);
-        if (s_sysex_dispatched) break;
-    }
-    while (usb_midi::read(byte) && !s_sysex_dispatched) {
-        feed_byte(s_usb_parser, byte, Src::Usb);
-    }
+    drain(uart::read,     s_jack_parser, Src::Jack);
+    drain(usb_midi::read, s_usb_parser,  Src::Usb);
 
     // A frame that stopped coming has to give the jack back, or everything the
     // pedal says queues behind a sender that is no longer there. Close the
