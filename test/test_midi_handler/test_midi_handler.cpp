@@ -546,9 +546,8 @@ void test_the_generated_clock_displaces_the_forwarded_one(void) {
 // MIDI In and MIDI Out run at the same 31250 baud, so forwarding can only keep up
 // with an unbroken inbound stream while the pedal emits no MORE bytes than it
 // received. There is no headroom to borrow: the moment the forwarded stream is
-// longer than the one arriving, the transmit ring fills, uart::write spins, the
-// loop stops draining the receive ring, and the pedal starts losing the very
-// messages it is supposed to act on.
+// longer than the one arriving, the backlog grows in the transmit queue until it is
+// full, and the jack starts dropping the very messages the pedal is there to pass on.
 //
 // That makes the byte budget an invariant worth asserting directly, with no
 // timing model in the way: bytes out <= bytes in, for a single-source stream.
