@@ -102,8 +102,15 @@ splicing into it.
 _Avoid_: DIN Out router, MIDI thru, merger, mixer
 
 **Carries-policy**:
-Whether a given source's traffic reaches a given jack at all, for the current routing. A
-question the router answers before anything is written, and where the rules that surprise people
-live: Active Sensing is dropped on every setting, the clock family rides its own switch, and a
-pedal generating its own clock drops the one arriving.
+Whether a given source's traffic reaches a given **port** at all, for the current routing — the
+MIDI jack the router writes, and the USB port a caller writes on the router's answer. One
+question with one answer, asked before anything is written, and where the rules that surprise
+people live: Active Sensing is dropped on every setting and on both ports, the clock family rides
+its own switch, and a pedal generating its own clock drops the one arriving. The clock rules are
+the jack's alone — a host watching an inbound clock over USB is not a second clock on a chain.
+
+What it is *not*: whether the pedal's own traffic is worth sending in the first place. The
+*tx_params* switch separates an unasked-for echo of a knob the player moved from a message the
+product meant to send or a reply a host asked for, and the source those arrive under cannot tell
+them apart — so it stays with the responder rather than joining this table.
 _Avoid_: routing rules, filter

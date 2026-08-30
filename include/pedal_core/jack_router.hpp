@@ -25,15 +25,47 @@ public:
     // contends for the jack exactly as the two inbound streams contend with each other.
     enum class Src : uint8_t { Jack, Usb, Self };
 
+    // Which port the question is about. This module writes only the jack; the USB port is
+    // written by the caller. Whether a source reaches one is the same question as whether
+    // it reaches the other, so both are answered here rather than half here and half at
+    // the call site.
+    enum class Port : uint8_t { Jack, Usb };
+
+    // The settings this module reads, and only those.
+    //
+    // Deliberately not the whole of midi_handler::Config. The receive half -- channel,
+    // omni, rx_pc, rx_sysex -- decides what the pedal ACTS on, which is not a question
+    // about the jack, and holding a copy of it here is what would let a rule read a
+    // channel that set_channel() had already moved on from. The two sets are disjoint in
+    // the type rather than in a comment.
+    //
+    // tx_params is not here either, and is not carries-policy. It separates one KIND of
+    // the pedal's own traffic from another -- an unasked-for echo of a knob the player
+    // just moved, against a message the product meant to send or a reply a host asked for
+    // -- and Src::Self cannot tell those apart. It also gates both transports rather than
+    // a route. It stays with MidiResponderBase, which knows which of the two it holds.
+    struct RoutingPolicy {
+        midi_handler::OutMode      out_mode   = midi_handler::OutMode::Merge;
+        midi_handler::UsbJackRoute usb_jack   = midi_handler::UsbJackRoute::Off;
+        bool                       clock_thru = true;
+    };
+
     // The routing settings. Also forgets which status byte is on the wire: running status
     // is a claim about what the device downstream has already been told, and a routing
     // change can mean it was told nothing -- the jack having been Off, or carrying another
     // source -- so the next message re-states its status. Re-stating one is never wrong,
     // only occasionally a byte that was not strictly needed.
+    void set_policy(const RoutingPolicy& p)
+    {
+        m_policy  = p;
+        m_running = 0u;
+    }
+
+    // The same, from the whole of a product's configuration: the routing fields are taken
+    // and the receive ones left where they belong.
     void set_config(const midi_handler::Config& cfg)
     {
-        m_config  = cfg;
-        m_running = 0u;
+        set_policy(RoutingPolicy{ cfg.out_mode, cfg.usb_jack, cfg.clock_thru });
     }
 
     // Whether the pedal is generating its own clock. midi_clock_out keeps this current.
@@ -44,61 +76,71 @@ public:
     // that surprise people, and a truth table is the shape they read in. Everything below
     // consults them, so they are never the whole of what a suite covers.
 
-    // Does this source's traffic reach the MIDI jack at all?
-    bool carries(Src src) const
+    // Does this source's traffic reach this port, for the current routing?
+    //
+    // The whole table, and the only one: a caller that writes to a port it does not own
+    // asks this rather than keeping a clause of its own. `status` is part of the question
+    // because two of the rules are about what the message IS rather than where it came
+    // from -- Active Sensing goes nowhere, and the clock family rides its own switch. Pass
+    // a frame's opening F0; pass 0 where the question is only about the source.
+    bool carries(Src src, Port port, uint8_t status) const
     {
         using midi_handler::OutMode;
-        using midi_handler::UsbJackRoute;
+
+        // Active Sensing describes one link, not the stream on it: forwarding it makes the
+        // device on the far side start expecting a heartbeat this pedal is not promising
+        // to keep. Dropped on every setting, and on both ports.
+        if (status == 0xFEu) return false;
+
+        if (port == Port::Usb) {
+            // The cross-route is a different job from the echo -- the pedal standing in as
+            // a MIDI interface -- and it carries what arrives on the jack whatever the jack
+            // itself is set to do with it.
+            //
+            // The clock rules below are the jack's alone, and deliberately so: clock_thru
+            // names a thru, and "exactly one clock leaves the jack" is an invariant about
+            // the wire this module writes. A host watching an inbound clock over USB is not
+            // a second clock on anybody's chain.
+            return src == Src::Jack && jack_reaches_usb();
+        }
+
+        // An inbound System Real-Time byte. The pedal's own is judged by whether the jack
+        // carries its traffic at all, not by the echo's rules: clock_thru governs
+        // forwarding somebody else's clock, and a pedal generating one must not suppress
+        // its own -- so Src::Self falls through to the table below.
+        if (status >= 0xF8u && src != Src::Self) {
+            if (m_policy.out_mode == OutMode::Off) return false;
+            if (src == Src::Usb && !usb_reaches_jack()) return false;
+
+            // The clock family rides its own switch, so a pedal can be the tempo master
+            // for the chain below it while still listening to a clock above. While the
+            // pedal is generating, the inbound clock is dropped whatever that switch says
+            // -- two clocks on one wire read as neither.
+            if (status == 0xF8u || status == 0xFAu || status == 0xFBu || status == 0xFCu)
+                return m_policy.clock_thru && !m_generating_clock;
+
+            // System Reset is a panic message; it travels with the echo.
+            return echoes();
+        }
+
         switch (src) {
-            case Src::Jack:
-                return m_config.out_mode == OutMode::Merge || m_config.out_mode == OutMode::Thru;
-            case Src::Usb:
-                return (m_config.out_mode == OutMode::Merge || m_config.out_mode == OutMode::Thru)
-                    && (m_config.usb_jack == UsbJackRoute::UsbToJack
-                        || m_config.usb_jack == UsbJackRoute::Both);
+            case Src::Jack: return echoes();
+            case Src::Usb:  return echoes() && usb_reaches_jack();
             case Src::Self:
-            default:
-                return m_config.out_mode == OutMode::Merge || m_config.out_mode == OutMode::Out;
+            default:        return m_policy.out_mode == OutMode::Merge
+                                || m_policy.out_mode == OutMode::Out;
         }
     }
 
-    // Does an inbound System Real-Time byte reach the MIDI jack?
+    // Does this source's traffic reach the MIDI jack at all, setting aside what the
+    // message is? The question most callers have, and the same table underneath.
+    bool carries(Src src) const { return carries(src, Port::Jack, 0u); }
+
+    // Does an inbound System Real-Time byte reach the MIDI jack? Named for the case that
+    // reads oddly without a name, and answered by the same table.
     bool carries_realtime(Src src, uint8_t status) const
     {
-        using midi_handler::OutMode;
-        using midi_handler::UsbJackRoute;
-
-        if (m_config.out_mode == OutMode::Off) return false;
-        if (src == Src::Usb
-            && m_config.usb_jack != UsbJackRoute::UsbToJack
-            && m_config.usb_jack != UsbJackRoute::Both)
-            return false;
-
-        // Active Sensing describes one link, not the stream on it: forwarding it makes a
-        // downstream device start expecting a heartbeat this pedal is not promising to
-        // keep. Dropped on every setting.
-        if (status == 0xFEu) return false;
-
-        // The clock family rides its own switch, so a pedal can be the tempo master for
-        // the chain below it while still listening to a clock above. While the pedal is
-        // generating, the inbound clock is dropped whatever that switch says -- two clocks
-        // on one wire read as neither.
-        if (status == 0xF8u || status == 0xFAu || status == 0xFBu || status == 0xFCu)
-            return m_config.clock_thru && !m_generating_clock;
-
-        // System Reset is a panic message; it travels with the echo.
-        return m_config.out_mode == OutMode::Merge || m_config.out_mode == OutMode::Thru;
-    }
-
-    // Does this source's traffic reach the USB port? The cross-route is the same decision
-    // as the one above and is answered here so the whole table lives in one module, even
-    // though the writing is the caller's.
-    bool usb_carries(Src src) const
-    {
-        using midi_handler::UsbJackRoute;
-        return src == Src::Jack
-            && (m_config.usb_jack == UsbJackRoute::JackToUsb
-                || m_config.usb_jack == UsbJackRoute::Both);
+        return carries(src, Port::Jack, status);
     }
 
     // --- traffic ---------------------------------------------------------------
@@ -164,10 +206,6 @@ public:
     // What the queue is holding, for a caller that wants to know whether the jack is behind.
     uint16_t pending() const { return m_out.size(); }
 
-    // Whether a frame from this source is streaming through right now. A caller uses it to
-    // stop handing itself more work while a reply of its own is still going out.
-    bool streaming_from(Src src) const { return m_locked && m_owner == src; }
-
     // One System Real-Time byte. Legal anywhere in the stream, so it is never queued and
     // passes a streaming frame untouched.
     //
@@ -180,8 +218,7 @@ public:
     // byte held back until there is room would arrive late, which is worse than not at all.
     void realtime(Src src, uint8_t status)
     {
-        const bool ok = (src == Src::Self) ? carries(src) : carries_realtime(src, status);
-        if (ok) uart::write(status);
+        if (carries(src, Port::Jack, status)) uart::write(status);
     }
 
     // --- a frame streaming through ---------------------------------------------
@@ -253,6 +290,34 @@ private:
     static constexpr uint16_t QUEUE_BYTES = 128;  // one preset dump, comfortably
     static constexpr uint32_t STALL_MS    = 1000u;
 
+    // The three clauses carries() is built from, named so the table above reads as the
+    // rules rather than as the settings they happen to be spelled in.
+    bool echoes() const
+    {
+        return m_policy.out_mode == midi_handler::OutMode::Merge
+            || m_policy.out_mode == midi_handler::OutMode::Thru;
+    }
+    bool usb_reaches_jack() const
+    {
+        return m_policy.usb_jack == midi_handler::UsbJackRoute::UsbToJack
+            || m_policy.usb_jack == midi_handler::UsbJackRoute::Both;
+    }
+    bool jack_reaches_usb() const
+    {
+        return m_policy.usb_jack == midi_handler::UsbJackRoute::JackToUsb
+            || m_policy.usb_jack == midi_handler::UsbJackRoute::Both;
+    }
+
+    // A queued message as the byte run it is on the wire. The queue holds canonical
+    // messages; everything that writes one or measures one wants the bytes, so the two
+    // shapes meet here rather than in each of them.
+    static uint16_t flatten(const MidiMessage& m, uint8_t (&out)[3])
+    {
+        out[0] = m.status;
+        for (uint8_t i = 1u; i < m.len; ++i) out[i] = m.data[i - 1u];
+        return m.len;
+    }
+
     void raw(const uint8_t* b, uint16_t n)
     {
         for (uint16_t i = 0; i < n; ++i) uart::write(b[i]);
@@ -263,9 +328,9 @@ private:
     // message half-written is a message the receiver cannot parse.
     uint16_t wire_length(const MidiMessage& m) const
     {
-        const uint8_t st = m.status;
-        const bool running = (st >= 0x80u && st < 0xF0u && st == m_running);
-        return running ? (uint16_t)(m.len - 1u) : (uint16_t)m.len;
+        uint8_t b[3];
+        const uint16_t n = flatten(m, b);
+        return frame_length(b, n);
     }
 
     // The same question for a frame that emit() is about to write: how many bytes it costs
@@ -280,24 +345,15 @@ private:
         return running ? (uint16_t)(n - 1u) : n;
     }
 
-    // One queued message onto the jack, holding running status. Coalescing and eviction
-    // rewrite the queue after a message enters it, so which status byte is already on the
-    // wire is not knowable until here: the queue holds canonical messages and this owns the
-    // wire representation.
+    // One queued message onto the jack. Coalescing and eviction rewrite the queue after a
+    // message enters it, so which status byte is already on the wire is not knowable until
+    // here -- the queue holds canonical messages, and the wire representation is emit()'s.
+    // Running status is held there rather than a second time here: one writer, one rule.
     void emit_message(const MidiMessage& m)
     {
-        const uint8_t st = m.status;
-        if (st >= 0x80u && st < 0xF0u) {
-            if (st == m_running) {
-                for (uint8_t i = 1u; i < m.len; ++i) uart::write(m.data[i - 1u]);
-                return;
-            }
-            m_running = st;
-        } else if (st >= 0xF0u && st <= 0xF7u) {
-            m_running = 0u;
-        }
-        uart::write(st);
-        for (uint8_t i = 1u; i < m.len; ++i) uart::write(m.data[i - 1u]);
+        uint8_t b[3];
+        const uint16_t n = flatten(m, b);
+        emit(b, n);
     }
 
     // One whole message onto the jack, holding running status: a channel message whose
@@ -363,7 +419,7 @@ private:
         m_queued = (uint16_t)(m_queued - i);
     }
 
-    midi_handler::Config m_config{};
+    RoutingPolicy m_policy{};
     bool     m_generating_clock = false;
 
     bool     m_locked  = false;

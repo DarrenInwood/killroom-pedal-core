@@ -28,7 +28,8 @@ namespace uart {
 #include <pedal_core/jack_router.hpp>
 
 using pedal_core::JackRouter;
-using Src = JackRouter::Src;
+using Src  = JackRouter::Src;
+using Port = JackRouter::Port;
 using midi_handler::Config;
 using midi_handler::OutMode;
 using midi_handler::UsbJackRoute;
@@ -58,6 +59,13 @@ static void send(Src src, std::vector<uint8_t> msg) {
 
 static bool wire_is(std::vector<uint8_t> expected) {
     return uart::g_wire == expected;
+}
+
+// "Does this source reach the USB port", which is one column of the same table rather than
+// a predicate of its own. 0xF0 stands in for a message that is not real-time and not the
+// Active Sensing the table drops everywhere.
+static bool usb_carries(Src src) {
+    return g_r->carries(src, JackRouter::Port::Usb, 0xF0u);
 }
 
 // ---------------------------------------------------------------------------
@@ -103,25 +111,58 @@ void test_usb_reaches_the_jack_only_when_both_switches_agree(void) {
 // The jack reaches USB only on the cross-routes that point that way, whatever the jack does.
 void test_the_jack_reaches_usb_only_on_the_cross_routes_that_point_that_way(void) {
     configure(OutMode::Off, UsbJackRoute::JackToUsb);
-    TEST_ASSERT_TRUE(g_r->usb_carries(Src::Jack));  // the MIDI jack being silent is irrelevant
+    TEST_ASSERT_TRUE(usb_carries(Src::Jack));  // the MIDI jack being silent is irrelevant
     configure(OutMode::Merge, UsbJackRoute::Both);
-    TEST_ASSERT_TRUE(g_r->usb_carries(Src::Jack));
+    TEST_ASSERT_TRUE(usb_carries(Src::Jack));
 
     configure(OutMode::Merge, UsbJackRoute::UsbToJack);
-    TEST_ASSERT_FALSE(g_r->usb_carries(Src::Jack));
+    TEST_ASSERT_FALSE(usb_carries(Src::Jack));
     configure(OutMode::Merge, UsbJackRoute::Both);
-    TEST_ASSERT_FALSE(g_r->usb_carries(Src::Usb));  // USB does not echo to itself
-    TEST_ASSERT_FALSE(g_r->usb_carries(Src::Self));
+    TEST_ASSERT_FALSE(usb_carries(Src::Usb));  // USB does not echo to itself
+    TEST_ASSERT_FALSE(usb_carries(Src::Self));
 }
 
-// Active Sensing describes one link, not the stream on it. Forwarding it makes a
-// downstream device expect a heartbeat this pedal is not promising to keep, so it is
-// dropped on every setting.
+// Active Sensing describes one link, not the stream on it. Forwarding it makes the device
+// on the far side expect a heartbeat this pedal is not promising to keep, so it is dropped
+// on every setting -- and on BOTH ports, which is the clause that used to be written a
+// second time at the caller that writes the USB one.
 void test_active_sensing_is_dropped_on_every_setting(void) {
     for (OutMode m : { OutMode::Merge, OutMode::Thru, OutMode::Out, OutMode::Off }) {
         configure(m);
         TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Jack, 0xFEu));
     }
+    for (UsbJackRoute r : { UsbJackRoute::JackToUsb, UsbJackRoute::Both }) {
+        configure(OutMode::Merge, r);
+        TEST_ASSERT_FALSE_MESSAGE(g_r->carries(Src::Jack, Port::Usb, 0xFEu),
+                                  "Active Sensing was cross-routed to USB");
+    }
+}
+
+// The clock rules are the jack's alone. clock_thru names a thru, and "exactly one clock
+// leaves the jack" is an invariant about the wire the router writes -- a host watching an
+// inbound clock over USB is not a second clock on anybody's chain.
+void test_the_clock_rules_do_not_reach_the_usb_cross_route(void) {
+    configure(OutMode::Merge, UsbJackRoute::JackToUsb, /*clock_thru=*/false);
+    TEST_ASSERT_TRUE_MESSAGE(g_r->carries(Src::Jack, Port::Usb, 0xF8u),
+                             "clock_thru silenced the cross-route as well as the thru");
+    TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Jack, 0xF8u));   // the jack itself is off
+
+    configure(OutMode::Merge, UsbJackRoute::JackToUsb, /*clock_thru=*/true);
+    g_r->set_generating_clock(true);
+    TEST_ASSERT_TRUE_MESSAGE(g_r->carries(Src::Jack, Port::Usb, 0xF8u),
+                             "the generated clock suppressed the cross-route too");
+    TEST_ASSERT_FALSE(g_r->carries_realtime(Src::Jack, 0xF8u));
+}
+
+// The pedal's own traffic is judged by whether the jack carries it at all, not by the
+// echo's rules: a pedal generating a clock must not suppress its own.
+void test_the_pedals_own_realtime_is_not_judged_by_the_echos_rules(void) {
+    configure(OutMode::Out, UsbJackRoute::Off, /*clock_thru=*/false);
+    g_r->set_generating_clock(true);
+    TEST_ASSERT_TRUE_MESSAGE(g_r->carries(Src::Self, Port::Jack, 0xF8u),
+                             "the pedal suppressed the clock it was generating");
+    configure(OutMode::Thru);
+    TEST_ASSERT_FALSE(g_r->carries(Src::Self, Port::Jack, 0xF8u));   // Thru does not carry it
 }
 
 // The clock family rides its own switch, so a pedal can be tempo master for the chain
@@ -616,6 +657,8 @@ int main(int, char**)
     RUN_TEST(test_usb_reaches_the_jack_only_when_both_switches_agree);
     RUN_TEST(test_the_jack_reaches_usb_only_on_the_cross_routes_that_point_that_way);
     RUN_TEST(test_active_sensing_is_dropped_on_every_setting);
+    RUN_TEST(test_the_clock_rules_do_not_reach_the_usb_cross_route);
+    RUN_TEST(test_the_pedals_own_realtime_is_not_judged_by_the_echos_rules);
     RUN_TEST(test_the_clock_family_rides_the_clock_thru_switch);
     RUN_TEST(test_a_generated_clock_suppresses_the_inbound_one);
     RUN_TEST(test_system_reset_travels_with_the_echo);

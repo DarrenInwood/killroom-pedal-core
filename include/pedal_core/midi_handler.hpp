@@ -79,8 +79,10 @@ namespace midi_handler {
     // Everything bound for the MIDI jack goes through one arbiter, so two streams cannot
     // splice into each other. What it does with them -- the lock, the queue, the
     // running-status hold, the stall timeout and the policy saying which source reaches
-    // which jack -- is <pedal_core/jack_router.hpp>'s, described there. The two functions
-    // below are what a product hands it.
+    // which port -- is <pedal_core/jack_router.hpp>'s, described there. That policy answers
+    // for the USB port as well as the jack, so this module asks it rather than keeping a
+    // clause of its own for the port it writes. The two functions below are what a product
+    // hands it.
 
     // One complete message the pedal originated (3-byte channel message, or a
     // whole F0..F7 frame). Dropped when out_mode does not carry the pedal's own
