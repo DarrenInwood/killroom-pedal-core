@@ -34,7 +34,8 @@ static uint8_t        s_sysex_always_len = 0;
 // -- the fields it reads and the ones the parser below reads are disjoint -- so it can be
 // stood up and driven on its own. See test_jack_router.
 static pedal_core::JackRouter s_router;
-using Src = pedal_core::JackRouter::Src;
+using Src  = pedal_core::JackRouter::Src;
+using Port = pedal_core::JackRouter::Port;
 
 // Running-status parser, one per transport so an interleaved USB message can
 // never corrupt a half-received jack message.
@@ -141,18 +142,19 @@ static void dispatch_sysex(Parser& p)
     p.sysex_overflow = false;
 }
 
-// The jack half is the router's, which decides for itself whether this source reaches
-// the jack; the USB half is one write behind the same policy object.
+// Neither half decides anything here. The jack is the router's to write, and the USB port
+// is this module's, but which source reaches which port is one question with one answer --
+// so this asks it for both rather than keeping a clause of its own for the one it writes.
 static void route_realtime(Src src, uint8_t status)
 {
     s_router.realtime(src, status);
-    if (s_router.usb_carries(src) && status != 0xFEu) usb_midi::send(&status, 1);
+    if (s_router.carries(src, Port::Usb, status)) usb_midi::send(&status, 1);
 }
 
 static void route_message(Src src, const uint8_t* msg, uint16_t n)
 {
     s_router.message(src, msg, n);
-    if (s_router.usb_carries(src)) usb_midi::send(msg, (uint8_t)n);
+    if (s_router.carries(src, Port::Usb, msg[0])) usb_midi::send(msg, (uint8_t)n);
 }
 
 static void feed_byte(Parser& p, uint8_t byte, Src src)
@@ -184,7 +186,7 @@ static void feed_byte(Parser& p, uint8_t byte, Src src)
             if (p.sysex_to_jack) { s_router.sysex_end(src, true); p.sysex_to_jack = false; }
             // A frame is forwarded to the jack byte by byte but reaches USB whole, so one
             // that outgrew the receive buffer cannot be forwarded there.
-            if (s_router.usb_carries(src) && !p.sysex_overflow)
+            if (s_router.carries(src, Port::Usb, 0xF0u) && !p.sysex_overflow)
                 usb_midi::send_sysex(p.sysex_buf, p.sysex_len);
             dispatch_sysex(p);
             return;
