@@ -1,4 +1,10 @@
 #pragma once
+#include "pedal_core_features.hpp"
+
+#if !PEDAL_CORE_HAS_TEMPO
+#  error "tempo_led.hpp needs PEDAL_CORE_HAS_TEMPO. Set it in pedal_core_features.hpp and supply pedal_core_tempo_config.hpp."
+#endif
+
 #include <cstdint>
 
 // Drives the tempo LED with a 25% duty cycle locked to the algorithm's primary rate: lit for

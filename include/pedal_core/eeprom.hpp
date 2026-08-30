@@ -6,6 +6,19 @@
 // Page-bounded writes at the size the product states in EEPROM_PAGE_BYTES, blocking.
 // Parts above 64 KB need a third address byte and are out of range. Hardware is
 // reached only through <pedal_core/hal.hpp>; the chip select is the product's business.
+// The interface is wider than the four functions below: this driver reads six constants
+// from the product's pedal_core_config.hpp, and none of them has a default here because
+// every one is a fact about the part on the board rather than a preference.
+//
+//   EEPROM_PAGE_BYTES         a write may not cross a page boundary, and assuming a LARGER
+//                             page than the part has makes it wrap and corrupt
+//   EEPROM_STORE_SIZE         the addressable stored map
+//   EEPROM_PROBE_ADDR         the scratch byte the boot health probe writes, outside it
+//   EEPROM_MIRROR_HEAD_END    what the dead-part RAM mirror holds: the header, the system
+//   EEPROM_MIRROR_TAIL_BASE   blocks, and a window big enough for one record of the bulk
+//   EEPROM_MIRROR_SLOT_BYTES  region between them -- all three zero to mirror the map whole
+//
+// test/support/pedal_core_config.hpp is the reference and says what each one means.
 namespace eeprom {
     // init() runs a one-time write-readback probe against a dedicated scratch byte to
     // decide whether the part is present and responding (see healthy()). Call once at

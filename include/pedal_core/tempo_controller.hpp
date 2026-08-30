@@ -1,5 +1,15 @@
 #pragma once
 #include <cstdint>
+#include "pedal_core_features.hpp"
+
+// Reached by a product that did not ask for the tempo layer, this header would fail on the
+// config include below with nothing to say about why. Saying it here costs one branch and
+// turns "no such file" into the question actually worth answering: whether this product
+// wants a tempo at all.
+#if !PEDAL_CORE_HAS_TEMPO
+#  error "tempo_controller.hpp needs PEDAL_CORE_HAS_TEMPO. Set it in pedal_core_features.hpp and supply pedal_core_tempo_config.hpp."
+#endif
+
 #include "pedal_core_tempo_config.hpp"   // BPM_DEFAULT
 #include <pedal_core/ialgorithm.hpp>
 

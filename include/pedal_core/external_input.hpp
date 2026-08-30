@@ -1,6 +1,12 @@
 #pragma once
 #include <cstdint>
 #include "action.hpp"
+#include "pedal_core_features.hpp"
+
+#if !PEDAL_CORE_HAS_EXTINPUT
+#  error "external_input.hpp needs PEDAL_CORE_HAS_EXTINPUT. Set it in pedal_core_features.hpp and supply pedal_core_extinput_config.hpp."
+#endif
+
 #include "pedal_core_extinput_config.hpp"   // EXT_ACTION_COUNT, EXT_DEFAULT_* defaults
 
 // The external-input jack — dual-function, menu-selected, for products that

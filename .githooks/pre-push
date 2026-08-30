@@ -53,6 +53,10 @@ find_pio() {
 PIO="$(find_pio || true)"
 if [ -n "${PIO:-}" ]; then
     step "native tests" "$PIO" test -e native
+    # The other side of the feature switches: the library built for a product that wants
+    # neither optional domain. Cheap -- one suite -- and it is the only thing that compiles
+    # the absent branch of every #if PEDAL_CORE_HAS_*.
+    step "native tests (minimal)" "$PIO" test -e native_minimal
 else
     say "SKIPPED native tests — no PlatformIO found (run tools/setup_build_env.sh)"
     SKIPPED+=("native tests")

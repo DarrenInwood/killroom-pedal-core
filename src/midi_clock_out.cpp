@@ -1,3 +1,12 @@
+#include "pedal_core_features.hpp"
+// An undefined switch is a preprocessor zero, which would compile this file to nothing
+// and lose its symbols somewhere the linker reports as an unrelated failure. Say so here
+// instead: the product names every domain, including the ones it does not want.
+#if !defined(PEDAL_CORE_HAS_TEMPO)
+#  error "pedal_core_features.hpp must define PEDAL_CORE_HAS_TEMPO (0 or 1)."
+#endif
+#if PEDAL_CORE_HAS_TEMPO
+
 #include <pedal_core/midi_clock_out.hpp>
 #include <pedal_core/midi_handler.hpp>
 #include "pedal_core_tempo_config.hpp"   // BPM_MIN / BPM_MAX
@@ -106,3 +115,5 @@ void midi_clock_out::poll(uint32_t now_ms)
 bool     midi_clock_out::enabled()           { return s_enabled; }
 uint32_t midi_clock_out::interval_ms()       { return s_interval_ms; }
 uint32_t midi_clock_out::interval_frac_q16() { return s_interval_frac; }
+
+#endif  // PEDAL_CORE_HAS_TEMPO

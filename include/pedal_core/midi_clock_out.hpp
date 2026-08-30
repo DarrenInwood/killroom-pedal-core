@@ -1,4 +1,10 @@
 #pragma once
+#include "pedal_core_features.hpp"
+
+#if !PEDAL_CORE_HAS_TEMPO
+#  error "midi_clock_out.hpp needs PEDAL_CORE_HAS_TEMPO. Set it in pedal_core_features.hpp and supply pedal_core_tempo_config.hpp."
+#endif
+
 #include <cstdint>
 
 // MIDI clock generation: 24 pulses per quarter note out of the MIDI jack, so a
