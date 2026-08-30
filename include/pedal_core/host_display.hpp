@@ -65,7 +65,19 @@ namespace systick {
 inline uint32_t now_ms() { return pedal_core::host_display::clock_ms(); }
 // A host has nothing to wait for, but the driver's reset sequence spends real time here
 // and the frame pacing reads it, so the delay moves the clock rather than being ignored.
-inline void delay_ms(uint32_t ms) { pedal_core::host_display::clock_ms() += ms; }
+//
+// Reading through now_ms() rather than clock_ms() keeps the two together in the object
+// file, and that is load-bearing rather than tidy. An inline function nothing in the
+// translation unit calls is not emitted at all; a host program that hands the compositor
+// its instants never calls now_ms() itself, and the library modules linked beside it do --
+// footswitch, tap_tempo and external_input ask the time on every pass. With now_ms() left
+// out, the linker goes looking for it, finds test/support's systick fake, and the binary
+// ends up with two clocks: the one this header settles and the one that member advances.
+// display::init() spends its reset pulse here, so this call is what keeps both present.
+inline void delay_ms(uint32_t ms)
+{
+    pedal_core::host_display::clock_ms() = now_ms() + ms;
+}
 }  // namespace systick
 
 namespace pedal_core::hal {

@@ -110,8 +110,9 @@ static constexpr uint8_t TICK_W         = 2u;
 static constexpr uint8_t TICK_TOP       = 57u, TICK_BOTTOM = 58u;
 static constexpr uint8_t GAUGE_TOP      = 59u;
 
-// Both clocks move together: the producers stamp themselves from systick, and update() is
-// handed the same instant.
+// Move the stubbed hardware clock. display::init() reads it for the reset pulse; the
+// compositor does not read it at all, which is what the transients being handed their
+// instant is for.
 static void at(uint32_t ms) { pedal_core::host_display::set_now_ms(ms); }
 
 // Bring a compositor up and put both clocks on `now`. The clock is set AFTER init()
@@ -183,12 +184,12 @@ void test_a_transient_suppresses_the_switch_labels(void) {
 
     { TestCompositor c; boot(c, 1000);
       c.set_switch_labels("Tap Tempo", "Freeze");
-      c.show_param_change("Mix", "50%", 512u);
+      c.show_param_change(1000, "Mix", "50%", 512u);
       at(1016); c.update(1016); display::capture(panel_with_labels); }
 
     { TestCompositor c; boot(c, 1000);
       c.set_switch_labels("", "");
-      c.show_param_change("Mix", "50%", 512u);
+      c.show_param_change(1000, "Mix", "50%", 512u);
       at(1016); c.update(1016); display::capture(panel_without_labels); }
 
     TEST_ASSERT_TRUE_MESSAGE(frames_match(panel_with_labels, panel_without_labels),
@@ -215,7 +216,7 @@ void test_the_focus_panel_leaves_the_header_alone(void) {
 
     { TestCompositor c; boot(c, 1000);
       c.set_context_name("Chorus"); c.set_preset_name("Shimmer");
-      c.show_param_change("Mix", "50%", 512u);
+      c.show_param_change(1000, "Mix", "50%", 512u);
       at(1140); c.update(1140); display::capture(with_panel); }   // fully unrolled
 
     // Everything above the panel's separator rule is untouched.
@@ -232,7 +233,7 @@ void test_the_focus_panel_leaves_the_header_alone(void) {
 void test_the_panel_marks_where_the_pot_is_waiting(void) {
     Frame f;
     { TestCompositor c; boot(c, 1000);
-      c.show_param_change("Mix", "50%", 0u, PARAM_MID);
+      c.show_param_change(1000, "Mix", "50%", 0u, PARAM_MID);
       at(1140); c.update(1140); display::capture(f); }        // fully unrolled
 
     // PARAM_MID lands 58 columns along the 118px travel (120 wide, less the tick's own 2).
@@ -253,7 +254,7 @@ void test_the_panel_marks_where_the_pot_is_waiting(void) {
 void test_a_panel_with_no_pickup_leaves_the_tick_rows_clear(void) {
     Frame f;
     { TestCompositor c; boot(c, 1000);
-      c.show_param_change("Mix", "50%", 512u);
+      c.show_param_change(1000, "Mix", "50%", 512u);
       at(1140); c.update(1140); display::capture(f); }
 
     for (uint8_t y = TICK_TOP; y <= TICK_BOTTOM; ++y)
@@ -266,11 +267,11 @@ void test_a_panel_with_no_pickup_leaves_the_tick_rows_clear(void) {
 void test_the_panel_tick_reaches_both_ends_of_its_track(void) {
     Frame low, high;
     { TestCompositor c; boot(c, 1000);
-      c.show_param_change("Mix", "50%", 512u, 0u);
+      c.show_param_change(1000, "Mix", "50%", 512u, 0u);
       at(1140); c.update(1140); display::capture(low); }
 
     { TestCompositor c; boot(c, 1000);
-      c.show_param_change("Mix", "50%", 512u, PARAM_MAX);
+      c.show_param_change(1000, "Mix", "50%", 512u, PARAM_MAX);
       at(1140); c.update(1140); display::capture(high); }
 
     TEST_ASSERT_TRUE_MESSAGE(px(low, PANEL_TRACK_X0, TICK_TOP)
@@ -297,7 +298,7 @@ void test_the_panel_tick_never_arrives_before_its_gauge(void) {
     for (uint32_t t = 1000; t <= 1160; ++t) {
         Frame f;
         { TestCompositor c; boot(c, 1000);
-          c.show_param_change("Mix", "50%", 512u, PARAM_MID);
+          c.show_param_change(1000, "Mix", "50%", 512u, PARAM_MID);
           at(t); c.update(t); display::capture(f); }
 
         const bool tick  = row_has_ink(f, TICK_TOP) || row_has_ink(f, TICK_BOTTOM);
@@ -312,7 +313,7 @@ void test_the_panel_tick_never_arrives_before_its_gauge(void) {
     // And it does arrive: a fully unrolled panel carries both.
     Frame late;
     { TestCompositor c; boot(c, 1000);
-      c.show_param_change("Mix", "50%", 512u, PARAM_MID);
+      c.show_param_change(1000, "Mix", "50%", 512u, PARAM_MID);
       at(1160); c.update(1160); display::capture(late); }
     TEST_ASSERT_TRUE_MESSAGE(row_has_ink(late, TICK_TOP), "the pickup tick never arrived");
     TEST_ASSERT_TRUE_MESSAGE(row_has_ink(late, 63u), "the gauge never reached the bottom edge");
@@ -324,7 +325,7 @@ void test_the_splash_animates_then_gives_the_screen_up(void) {
     boot(c, 1000);
     c.set_preset_name("Shimmer");
 
-    c.show_splash();
+    c.show_splash(1000);
     TEST_ASSERT_EQUAL_UINT8(1, c.splash_frames);          // drawn and flushed immediately
     TEST_ASSERT_EQUAL_UINT32(0u, c.last_splash_elapsed);
 
@@ -344,7 +345,7 @@ void test_a_faulted_boot_runs_the_fault_then_the_splash(void) {
     TestCompositor c;
     boot(c, 1000);
 
-    c.show_storage_fault();
+    c.show_storage_fault(1000);
     Frame fault; display::capture(fault);
     TEST_ASSERT_TRUE(frame_has_ink(fault));               // the warning is up
     TEST_ASSERT_EQUAL_UINT8(0, c.splash_frames);
@@ -370,7 +371,7 @@ void test_the_save_confirmation_owns_the_screen(void) {
     at(1010); c.update(1010);
     TEST_ASSERT_EQUAL_UINT8(1, c.screens_drawn);
 
-    c.show_saved();
+    c.show_saved(1010);
     at(1100); c.update(1100);
     TEST_ASSERT_EQUAL_UINT8(1, c.screens_drawn);          // the product screen stood down
 
@@ -516,7 +517,7 @@ void test_a_slide_under_a_splash_is_refused(void) {
     c.set_preset_name("First");
     at(1010); c.update(1010);
 
-    c.show_splash();
+    c.show_splash(1010);
     Frame splash; display::capture(splash);
 
     c.begin_slide(1);
@@ -805,6 +806,76 @@ void test_a_cursor_inside_the_name_is_kept(void) {
     TEST_ASSERT_TRUE_MESSAGE(frame_has_ink(f), "the name editor drew nothing");
 }
 
+// ---------------------------------------------------------------------------
+// One clock
+// ---------------------------------------------------------------------------
+
+// Where the hardware clock happens to stand does not change what a frame shows, because the
+// compositor never reads it.
+//
+// This is the bug the two clocks created, and the one FramePacer::since() had to defend
+// against from the wrong end. A superloop samples the instant it draws with and then polls
+// its inputs, so a transient opened part-way through a tick was stamped from systick a
+// millisecond or two AHEAD of the frame that first had the chance to draw it. The save
+// confirmation is opened exactly once, so it was lost outright rather than shortened.
+//
+// No test here could reach that: every one of them set both clocks to the same value, which
+// is precisely what a caller cannot promise. Now there is only one to set.
+void test_the_frames_instant_is_the_only_clock(void) {
+    Frame together, skewed;
+
+    { TestCompositor c; boot(c, 1000);
+      c.set_screen(7u);
+      at(1010); c.update(1010);
+      c.show_saved(1010);
+      at(1100); c.update(1100); display::capture(together); }
+
+    { TestCompositor c; boot(c, 1000);
+      c.set_screen(7u);
+      at(1010); c.update(1010);
+      at(1400);                  // the hardware clock has run well past the frame's instant
+      c.show_saved(1010);        // opened at the instant the frame will be drawn with
+      c.update(1100); display::capture(skewed); }
+
+    TEST_ASSERT_TRUE_MESSAGE(frames_match(together, skewed),
+                             "the frame moved with a clock the compositor should not read");
+}
+
+// A transition that ends on this tick puts nothing up: the frame the state now stands at is
+// the next one, and update() says so rather than leaving a product to remember it. A pedal
+// that stopped ticking when its animation ended would keep a half-composited screen.
+void test_update_says_a_frame_is_still_owed_when_a_slide_settles(void) {
+    TestCompositor c;
+    boot(c, 1000);
+    c.set_preset_name("First");
+    at(1010); c.update(1010);
+
+    TEST_ASSERT_TRUE(c.begin_slide(+1));
+    c.set_preset_name("Second");
+
+    // Run the transition out. Only the tick it settles on owes another frame.
+    bool owed = false;
+    for (uint32_t t = 1011; t <= 1400; ++t) { at(t); owed = c.update(t); if (owed) break; }
+    TEST_ASSERT_TRUE_MESSAGE(owed, "the settling tick never said a frame was owed");
+
+    // And the owed one is drawn from the same instant, so the loop a product writes as
+    // `while (c.update(now)) {}` runs at most twice.
+    TEST_ASSERT_FALSE_MESSAGE(c.update(pedal_core::host_display::now_ms()),
+                              "the owed frame owed another");
+}
+
+// A slide the pacer refuses says so, rather than capturing nothing and looking started.
+void test_begin_slide_says_when_the_screen_is_held(void) {
+    TestCompositor c;
+    boot(c, 1000);
+    c.show_splash(1000);
+    TEST_ASSERT_FALSE_MESSAGE(c.begin_slide(+1), "a slide began under the splash");
+
+    // Once the splash has had its turn the screen is available again.
+    for (uint32_t t = 1010; t <= 4000; t += 10) { at(t); c.update(t); }
+    TEST_ASSERT_TRUE_MESSAGE(c.begin_slide(+1), "the screen never came back");
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_a_state_change_reaches_the_framebuffer);
@@ -831,6 +902,9 @@ int main(int, char**) {
     RUN_TEST(test_names_differing_past_the_buffer_are_the_same_screen);
     RUN_TEST(test_a_table_of_screens_each_draws_its_own);
     RUN_TEST(test_the_shipped_clock_advances_over_the_reset_pulse);
+    RUN_TEST(test_the_frames_instant_is_the_only_clock);
+    RUN_TEST(test_update_says_a_frame_is_still_owed_when_a_slide_settles);
+    RUN_TEST(test_begin_slide_says_when_the_screen_is_held);
     RUN_TEST(test_the_name_cursor_cannot_walk_off_the_name);
     RUN_TEST(test_an_applied_state_cannot_carry_the_cursor_off_the_name);
     RUN_TEST(test_a_cursor_inside_the_name_is_kept);

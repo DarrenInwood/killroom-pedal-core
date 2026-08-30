@@ -1,6 +1,5 @@
 #include <pedal_core/ui/compositor.hpp>
 #include <pedal_core/font_data.hpp>
-#include <pedal_core/hal.hpp>            // systick::now_ms
 #include "pedal_core_ui_config.hpp"      // DISPLAY_PARAM_SHOW_MS
 #include <cstring>
 #include <cstdio>
@@ -514,7 +513,7 @@ void Compositor::init()
     display::init();
 }
 
-void Compositor::update(uint32_t now)
+bool Compositor::update(uint32_t now)
 {
     const FramePacer::Decision d = m_pacer.decide(now, display::update_busy());
 
@@ -528,7 +527,7 @@ void Compositor::update(uint32_t now)
 
     switch (d.what) {
         case FramePacer::What::Nothing:
-            return;
+            return false;
 
         case FramePacer::What::SplashFrame:
             display::clear();
@@ -539,8 +538,8 @@ void Compositor::update(uint32_t now)
             // The storage-fault hold just ended, so the normal splash follows it: a
             // faulted boot runs Storage Fault -> Splash -> UI rather than jumping
             // straight to the UI. show_splash() puts its first frame up itself.
-            show_splash();
-            return;
+            show_splash(now);
+            return false;
 
         case FramePacer::What::SlideStep:
             display::compose_hslide_band(m_slide_from, m_slide_to,
@@ -556,14 +555,14 @@ void Compositor::update(uint32_t now)
             draw_save();
             break;
 
-        // The transition is over, and the frame it leaves owed is drawn by the ordinary
-        // path on the next pass. Nothing is painted here: replaying the destination
+        // The transition is over, and the frame it leaves owed is the caller's next
+        // update(): this returns true to say so rather than leaving it to be remembered. Nothing is painted here: replaying the destination
         // captured when the transition began would paint state that moved while it ran —
         // a second slide is refused while one runs, so a fast spin through screens moves
         // the state without animating — and painting it live here would only draw the
         // very frame the pacer has already marked the screen dirty for.
         case FramePacer::What::SlideSettle:
-            return;
+            return true;   // the frame the state now stands at is still owed
 
         case FramePacer::What::Frame:
         case FramePacer::What::FramePanel:
@@ -576,6 +575,7 @@ void Compositor::update(uint32_t now)
     }
 
     display::update_async();
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -704,16 +704,16 @@ void Compositor::set_name_cursor(uint8_t cursor)
     if (m_state.name_cursor != cursor) { m_state.name_cursor = cursor; m_pacer.changed(); }
 }
 
-void Compositor::show_message(const char* msg, MsgPos pos)
+void Compositor::show_message(uint32_t now, const char* msg, MsgPos pos)
 {
     strncpy(m_banner, msg, sizeof(m_banner) - 1);
     m_banner[sizeof(m_banner) - 1] = '\0';
     m_banner_bottom = (pos == MsgPos::Bottom);
-    m_pacer.overlay(FramePacer::Overlay::Banner, systick::now_ms());
+    m_pacer.overlay(FramePacer::Overlay::Banner, now);
 }
 
-void Compositor::show_param_change(const char* name, const char* value, uint16_t bar,
-                                   uint16_t pickup)
+void Compositor::show_param_change(uint32_t now, const char* name, const char* value,
+                                   uint16_t bar, uint16_t pickup)
 {
     strncpy(m_panel_name, name, sizeof(m_panel_name) - 1);
     m_panel_name[sizeof(m_panel_name) - 1] = '\0';
@@ -721,29 +721,29 @@ void Compositor::show_param_change(const char* name, const char* value, uint16_t
     m_panel_val[sizeof(m_panel_val) - 1] = '\0';
     m_panel_bar    = bar;
     m_panel_pickup = pickup;
-    m_pacer.overlay(FramePacer::Overlay::Panel, systick::now_ms());
+    m_pacer.overlay(FramePacer::Overlay::Panel, now);
 }
 
-void Compositor::show_saved()
+void Compositor::show_saved(uint32_t now)
 {
-    m_pacer.overlay(FramePacer::Overlay::Save, systick::now_ms());
+    m_pacer.overlay(FramePacer::Overlay::Save, now);
 }
 
-void Compositor::begin_slide(int8_t dir)
+bool Compositor::begin_slide(int8_t dir)
 {
     // A splash or another slide in flight keeps the screen; otherwise capture the current
     // frame as the "from" and let the next update() render and slide in the "to".
-    arm_slide(m_pacer.slide(), dir, 0u, (uint8_t)(OLED_HEIGHT - 1u));
+    return arm_slide(m_pacer.slide(), dir, 0u, (uint8_t)(OLED_HEIGHT - 1u));
 }
 
-void Compositor::begin_slide_band(int8_t dir, uint8_t y0, uint8_t y1, uint32_t duration_ms)
+bool Compositor::begin_slide_band(int8_t dir, uint8_t y0, uint8_t y1, uint32_t duration_ms)
 {
-    arm_slide(m_pacer.slide(duration_ms), dir, y0, y1);
+    return arm_slide(m_pacer.slide(duration_ms), dir, y0, y1);
 }
 
-void Compositor::arm_slide(FramePacer::SlideStart start, int8_t dir, uint8_t y0, uint8_t y1)
+bool Compositor::arm_slide(FramePacer::SlideStart start, int8_t dir, uint8_t y0, uint8_t y1)
 {
-    if (start == FramePacer::SlideStart::Refused) return;
+    if (start == FramePacer::SlideStart::Refused) return false;
     // A transient overlay (the param focus panel / a banner) has been closed, so re-render
     // the underlying screen for the slide to capture. The state behind it is still current
     // here — a slide begins before the algorithm/preset/page actually changes — so this
@@ -753,11 +753,11 @@ void Compositor::arm_slide(FramePacer::SlideStart start, int8_t dir, uint8_t y0,
     m_slide_dir = dir;
     m_slide_y0  = y0;
     m_slide_y1  = y1;
+    return true;
 }
 
-void Compositor::show_splash()
+void Compositor::show_splash(uint32_t now)
 {
-    const uint32_t now = systick::now_ms();
     display::clear();
     draw_splash_art(0);       // first frame up immediately; the superloop animates the rest
     display::update();
@@ -777,13 +777,13 @@ void Compositor::draw_storage_fault_screen()
     display::draw_text(0, 7, "Starting anyway...");
 }
 
-void Compositor::show_storage_fault()
+void Compositor::show_storage_fault(uint32_t now)
 {
     // A static hold on the same timer the splash uses, with the splash queued behind it,
     // so the superloop reveals the normal screen only after both have had their turn.
     draw_storage_fault_screen();
     display::update();
-    m_pacer.fault_hold(systick::now_ms());
+    m_pacer.fault_hold(now);
 }
 
 }  // namespace pedal_core::ui

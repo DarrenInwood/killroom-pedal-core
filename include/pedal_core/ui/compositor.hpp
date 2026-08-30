@@ -58,7 +58,14 @@ public:
     explicit Compositor(const LayoutSpec& layout) : m_layout(layout) {}
 
     void init();
-    void update(uint32_t now);
+
+    // Draw whatever this instant is due, and say whether another frame is owed straight
+    // away. A transition that ends on this tick puts nothing up -- the frame the state now
+    // stands at is the next one -- so a product that stops ticking when its animation ends
+    // would leave a half-composited screen on the glass. `while (c.update(now)) {}` is the
+    // superloop that cannot: the owed frame is drawn from the same instant, and the second
+    // call always settles, so the loop runs at most twice.
+    bool update(uint32_t now);
 
     // The performance screen as one value.
     //
@@ -136,17 +143,43 @@ public:
     uint8_t screen() const { return m_state.screen; }
 
     // --- transients ---------------------------------------------------------
+    //
+    // Every one of these takes the instant it is opened at, and it must be the same one the
+    // frame is drawn with. A superloop samples the time once and then polls its inputs, so
+    // a transient opened part-way through a tick and stamped from its own clock reads as
+    // opened slightly in the future -- and a transient whose dwell has not started yet is
+    // one the frame that could have drawn it decides is not up. The save confirmation is
+    // opened exactly once, so it is lost outright rather than shortened.
+    //
+    // The compositor therefore reads no clock at all. Like FramePacer, it is given the
+    // instant and decides from it.
+    //
     // `pickup` is where the pot is pointing when the panel answers a turn of a knob still
     // waiting to be picked up, drawn as the tick above the gauge. NO_BAR everywhere else:
     // the mark says which way to keep turning *this* knob, so it belongs to the gesture of
     // turning it rather than to every way a value can move.
-    virtual void show_param_change(const char* name, const char* value, uint16_t bar,
-                                   uint16_t pickup = NO_BAR);
-    virtual void show_message(const char* msg, MsgPos pos = MsgPos::Centre);
-    virtual void show_saved();
-    virtual void show_splash();
-    virtual void show_storage_fault();
-    virtual void begin_slide(int8_t dir);
+    virtual void show_param_change(uint32_t now, const char* name, const char* value,
+                                   uint16_t bar, uint16_t pickup = NO_BAR);
+    virtual void show_message(uint32_t now, const char* msg, MsgPos pos = MsgPos::Centre);
+    virtual void show_saved(uint32_t now);
+    virtual void show_splash(uint32_t now);
+    virtual void show_storage_fault(uint32_t now);
+
+    // Capture the screen being left and start a transition to what replaces it. Returns
+    // false when a splash or another slide holds the screen, in which case nothing was
+    // captured and the state change will simply appear on the next ordinary frame.
+    //
+    // Call this BEFORE the state that changes the screen is pushed: what it captures is the
+    // frame being left, and after the push that frame is the destination -- the transition
+    // then plays as a crossing from the new screen to itself, which is a slide nobody sees
+    // and no error anywhere. This ordering is the one thing about the transition a caller
+    // has to get right.
+    //
+    // Not [[nodiscard]]: a product that slides on every preset change and does not care
+    // whether the splash swallowed one is written correctly, and this library compiles
+    // clean so a consumer can turn -Werror on. The answer is there for a caller that wants
+    // it rather than demanded of one that does not.
+    virtual bool begin_slide(int8_t dir);
     // A slide of one band of the screen: only the pixel rows y0..y1 composite, and every
     // row outside the band is left to the ordinary redraw, which has already drawn the
     // destination there by the time the first step lands. Pixel rows rather than pages,
@@ -156,7 +189,7 @@ public:
     // `duration_ms` is how long the transition runs, said outright rather than defaulted:
     // a band is a shorter journey than a full-screen crossing and generally wants a
     // shorter time to make it, which is the reason a caller reaches for this form.
-    virtual void begin_slide_band(int8_t dir, uint8_t y0, uint8_t y1, uint32_t duration_ms);
+    virtual bool begin_slide_band(int8_t dir, uint8_t y0, uint8_t y1, uint32_t duration_ms);
 
 protected:
     virtual ~Compositor() = default;
@@ -272,8 +305,9 @@ protected:
 
 private:
     void draw_normal(bool transient_owns_bottom_row = false);
-    // What both begin_slide forms do once the pacer has accepted the transition.
-    void arm_slide(FramePacer::SlideStart start, int8_t dir, uint8_t y0, uint8_t y1);
+    // What both begin_slide forms do once the pacer has accepted the transition, and the
+    // one place that answers whether it did.
+    bool arm_slide(FramePacer::SlideStart start, int8_t dir, uint8_t y0, uint8_t y1);
     void draw_header(uint32_t now);
     void draw_context_line();
     void draw_param_grid();
