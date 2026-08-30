@@ -23,7 +23,6 @@ static constexpr uint32_t ANIM_FRAME_MS = 16u;   // the animating cadence
 static constexpr uint32_t ANIM_MS       = 140u;  // the enter/exit ramp
 static constexpr uint32_t SPLASH_MS     = 2000u;
 static constexpr uint32_t FAULT_HOLD_MS = 2500u;
-static constexpr uint32_t SAVE_TOTAL_MS = 1200u;
 static constexpr uint32_t DWELL_MS      = DISPLAY_PARAM_SHOW_MS;
 
 // A pacer that has just drawn at t=1000, so tests start from a known idle rather than
@@ -147,22 +146,24 @@ void test_a_banner_is_paced_like_the_panel(void) {
 
 // The save animation owns the whole screen for its own, longer total, and animates
 // throughout — it carries elapsed time rather than a ramp position.
-void test_the_save_animation_runs_to_its_own_total(void) {
+void test_the_save_confirmation_is_a_still_frame_held_for_the_dwell(void) {
     uint32_t t = 0; FramePacer p = settled(t);
     p.overlay(Overlay::Save, t);
 
-    const FramePacer::Decision d = p.decide(t + 600u, false);
+    // A still frame carries no progress, so nothing rides along to draw it with.
+    const FramePacer::Decision d = p.decide(t + 200u, false);
     TEST_ASSERT_EQUAL_INT((int)What::FrameSave, (int)d.what);
-    TEST_ASSERT_EQUAL_UINT32(600u, d.arg);                     // elapsed, not a ramp
+    TEST_ASSERT_EQUAL_UINT32(0u, d.arg);
 
-    // Animating throughout, so the cadence stays fast well past the panel's ramp.
-    p.decide(t + 700u, false);
-    TEST_ASSERT_EQUAL_INT((int)What::Nothing,   (int)p.decide(t + 700u + ANIM_FRAME_MS - 1u, false).what);
-    TEST_ASSERT_EQUAL_INT((int)What::FrameSave, (int)p.decide(t + 700u + ANIM_FRAME_MS, false).what);
+    // And it never asks for the animating cadence: once drawn, the next frame is the idle
+    // one, so holding SAVED on the glass costs no redraws at all.
+    p.decide(t + 300u, false);
+    TEST_ASSERT_EQUAL_INT((int)What::Nothing,   (int)p.decide(t + 300u + ANIM_FRAME_MS, false).what);
+    TEST_ASSERT_EQUAL_INT((int)What::FrameSave, (int)p.decide(t + 300u + REFRESH_MS, false).what);
 
-    // It outlasts the panel dwell, and hands the screen back at its own total.
-    TEST_ASSERT_EQUAL_INT((int)What::FrameSave, (int)p.decide(t + SAVE_TOTAL_MS - 1u, false).what);
-    TEST_ASSERT_EQUAL_INT((int)What::Frame,     (int)p.decide(t + SAVE_TOTAL_MS, false).what);
+    // It hands the screen back on the same dwell every other transient uses.
+    TEST_ASSERT_EQUAL_INT((int)What::FrameSave, (int)p.decide(t + DWELL_MS - 1u, false).what);
+    TEST_ASSERT_EQUAL_INT((int)What::Frame,     (int)p.decide(t + DWELL_MS, false).what);
 }
 
 // The splash animates for its hold and then gives the screen up.
@@ -309,7 +310,7 @@ int main(int, char**) {
     RUN_TEST(test_a_settled_overlay_idles_at_the_slower_cap);
     RUN_TEST(test_reopening_the_panel_does_not_replay_the_unroll);
     RUN_TEST(test_a_banner_is_paced_like_the_panel);
-    RUN_TEST(test_the_save_animation_runs_to_its_own_total);
+    RUN_TEST(test_the_save_confirmation_is_a_still_frame_held_for_the_dwell);
     RUN_TEST(test_the_splash_animates_for_its_hold);
     RUN_TEST(test_the_splash_suppresses_the_screen_underneath);
     RUN_TEST(test_a_faulted_boot_runs_the_fault_then_the_splash);

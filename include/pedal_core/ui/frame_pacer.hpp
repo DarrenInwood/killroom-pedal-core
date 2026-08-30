@@ -34,7 +34,7 @@ public:
         Frame,          // the ordinary composed frame, nothing over it
         FramePanel,     // the frame with the param focus panel; arg = unroll progress 0..256
         FrameBanner,    // the frame with a message banner; arg = progress 0..256
-        FrameSave,      // the save animation, which owns the whole screen; arg = ms elapsed
+        FrameSave,      // the save confirmation, which owns the whole screen; no arg
     };
 
     struct Decision {
@@ -187,7 +187,7 @@ public:
         switch (m_overlay) {
             case Overlay::Panel:  d.what = What::FramePanel;  d.arg = overlay_prog(overlay_elapsed); break;
             case Overlay::Banner: d.what = What::FrameBanner; d.arg = overlay_prog(overlay_elapsed); break;
-            case Overlay::Save:   d.what = What::FrameSave;   d.arg = overlay_elapsed;               break;
+            case Overlay::Save:   d.what = What::FrameSave;                                          break;
             default:              d.what = What::Frame;                                              break;
         }
         return d;
@@ -198,15 +198,13 @@ private:
     static constexpr uint32_t REFRESH_MS     = 50u;
     static constexpr uint32_t ANIM_FRAME_MS  = 16u;
     static constexpr uint32_t ANIM_MS        = 140u;
-    static constexpr uint32_t SAVE_TOTAL_MS  = 1200u;
     static constexpr uint32_t SPLASH_MS      = 2000u;
     static constexpr uint32_t FAULT_HOLD_MS  = 2500u;
 
-    // How long the transient stays up before it hands the screen back.
-    uint32_t overlay_total() const
-    {
-        return (m_overlay == Overlay::Save) ? SAVE_TOTAL_MS : (uint32_t)DISPLAY_PARAM_SHOW_MS;
-    }
+    // How long a transient stays up before it hands the screen back. One dwell for all
+    // three: the save confirmation is a thing to read, the same as the panel and the banner
+    // are, so it is held for the same time the product gives anything else to be read.
+    uint32_t overlay_total() const { return (uint32_t)DISPLAY_PARAM_SHOW_MS; }
 
     // Enter/exit progress, 0..256, for the timed panel and banner.
     uint16_t overlay_prog(uint32_t elapsed) const
@@ -218,10 +216,11 @@ private:
         return 0u;
     }
 
-    // Whether the overlay is mid-animation this tick, which drives the faster cadence.
+    // Whether the overlay is mid-animation this tick, which drives the faster cadence. The
+    // save confirmation is a still frame, so it never asks for one.
     bool overlay_animating(uint32_t elapsed) const
     {
-        if (m_overlay == Overlay::Save) return true;
+        if (m_overlay == Overlay::Save) return false;
         return elapsed < ANIM_MS || elapsed >= DISPLAY_PARAM_SHOW_MS - ANIM_MS;
     }
 
