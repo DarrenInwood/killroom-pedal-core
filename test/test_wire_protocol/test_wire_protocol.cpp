@@ -10,6 +10,7 @@
 #include <unity.h>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <pedal_core/wire_protocol.hpp>
 
 using namespace pedal_core::wire;
@@ -276,9 +277,15 @@ void test_expression_off_sentinel_is_a_legal_data_byte(void) {
 
 // --- the preset frame -------------------------------------------------------
 
-// Build a representative frame: seven parameters, a name, and the two tags a
-// multi-effect sends.
-static uint16_t build_sample_preset(uint8_t* buf, uint16_t cap, uint8_t device)
+// A representative frame: seven parameters, a name, and the two tags a multi-effect sends.
+//
+// Built through the library's own builder rather than laid out here. A suite that
+// reimplements the layout it is testing agrees with whatever it copied, which is what this
+// one did while build_preset did not exist.
+static const uint16_t SAMPLE_PARAMS[7] = { 700u, 0u, 1023u, 512u, 1u, 2u, 930u };
+static const char     SAMPLE_NAME[]    = "Slapback";
+
+static PresetHead sample_preset_head()
 {
     PresetHead h{};
     h.slot        = 130u;          // bank 1, program 2
@@ -286,22 +293,36 @@ static uint16_t build_sample_preset(uint8_t* buf, uint16_t cap, uint8_t device)
     h.algorithm   = 9u;
     h.flags       = 0u;
     h.param_count = 7u;
+    return h;
+}
 
-    Writer w(buf, cap);
-    write_preset_head(w, device, cmd::PRESET_DUMP_DATA, h);
-    const uint16_t params[7] = { 700u, 0u, 1023u, 512u, 1u, 2u, 930u };
-    for (const uint16_t v : params) w.u14(v);
-
-    const char name[] = "Slapback";
-    w.u7((uint8_t)(sizeof(name) - 1u));
-    w.bytes((const uint8_t*)name, (uint16_t)(sizeof(name) - 1u));
-
+// The TLV run the sample carries, as the bytes it is on the wire.
+static uint16_t sample_preset_tlv(uint8_t* out, uint16_t cap)
+{
     const uint8_t expr[5]  = { EXPR_OFF, 0u, 0u, 0x7Fu, 0x07u };
     const uint8_t tempo[3] = { 1u, (uint8_t)(1200u & 0x7Fu), (uint8_t)(1200u >> 7) };
-    w.tlv(preset_tag::EXPR, expr, sizeof(expr));
-    w.tlv(preset_tag::TEMPO, tempo, sizeof(tempo));
-    w.end();
-    return w.length();
+    uint16_t n = 0u;
+    const auto put = [&](uint8_t tag, const uint8_t* v, uint8_t len) {
+        if ((uint16_t)(n + 2u + len) > cap) return;
+        out[n++] = tag;
+        out[n++] = len;
+        for (uint8_t i = 0; i < len; ++i) out[n++] = v[i];
+    };
+    put(preset_tag::EXPR, expr, (uint8_t)sizeof(expr));
+    put(preset_tag::TEMPO, tempo, (uint8_t)sizeof(tempo));
+    return n;
+}
+
+static uint16_t build_sample_preset(uint8_t* buf, uint16_t cap, uint8_t device)
+{
+    uint8_t tlv[16] = {};
+    PresetBody b{};
+    b.params   = SAMPLE_PARAMS;
+    b.name     = SAMPLE_NAME;
+    b.name_len = (uint8_t)(sizeof(SAMPLE_NAME) - 1u);
+    b.tlv      = tlv;
+    b.tlv_len  = sample_preset_tlv(tlv, sizeof(tlv));
+    return build_preset(sample_preset_head(), b, device, cmd::PRESET_DUMP_DATA, buf, cap);
 }
 
 void test_preset_round_trips(void) {
@@ -414,6 +435,128 @@ void test_preset_rejects_an_unrelated_command(void) {
     buf[3] = cmd::GLOBAL_DATA;
     PresetView v{};
     TEST_ASSERT_FALSE(parse_preset(buf, n, 0x01u, v));
+}
+
+// --- the preset builder -----------------------------------------------------
+
+// Build, parse, build again: the same bytes both times.
+//
+// This is the shape a round-trip cannot manage. A parse of a build proves the two agree
+// with each other; rebuilding from what the parser produced proves the frame is the only
+// one that describes that preset, so a field that moved on one side and not the other
+// stops being invisible.
+void test_the_preset_frame_is_a_fixed_point(void) {
+    uint8_t first[96] = {};
+    const uint16_t n1 = build_sample_preset(first, sizeof(first), 0x01u);
+    TEST_ASSERT_TRUE(n1 > 0);
+
+    PresetView v{};
+    TEST_ASSERT_TRUE(parse_preset(first, n1, 0x01u, v));
+
+    // Everything the second build needs comes from the parse, not from the sample.
+    uint16_t params[16] = {};
+    for (uint8_t i = 0; i < v.head.param_count; ++i) params[i] = read_u14(&v.params[i * 2u]);
+
+    PresetBody b{};
+    b.params   = params;
+    b.name     = (const char*)v.name;
+    b.name_len = v.name_len;
+    b.tlv      = v.tlv;
+    b.tlv_len  = v.tlv_len;
+
+    uint8_t second[96] = {};
+    const uint16_t n2 = build_preset(v.head, b, 0x01u, cmd::PRESET_DUMP_DATA,
+                                     second, sizeof(second));
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(n1, n2, "the rebuilt frame was a different length");
+    TEST_ASSERT_EQUAL_UINT8_ARRAY_MESSAGE(first, second, n1, "the rebuilt frame differs");
+}
+
+// The head owns the count, so a block that disagrees with it cannot be described. What used
+// to make parse_preset read the name out of the parameter block is now unsayable.
+void test_the_builder_writes_exactly_the_count_the_head_gives(void) {
+    PresetHead h = sample_preset_head();
+    h.param_count = 3u;
+
+    PresetBody b{};
+    b.params   = SAMPLE_PARAMS;          // still seven values; only three are the frame's
+    b.name     = SAMPLE_NAME;
+    b.name_len = (uint8_t)(sizeof(SAMPLE_NAME) - 1u);
+
+    uint8_t buf[96] = {};
+    const uint16_t n = build_preset(h, b, 0x01u, cmd::PRESET_DUMP_DATA, buf, sizeof(buf));
+
+    PresetView v{};
+    TEST_ASSERT_TRUE(parse_preset(buf, n, 0x01u, v));
+    TEST_ASSERT_EQUAL_UINT8(3u, v.head.param_count);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(b.name_len, v.name_len, "the name was read from the wrong offset");
+    for (uint8_t i = 0; i < 3u; ++i)
+        TEST_ASSERT_EQUAL_UINT16(SAMPLE_PARAMS[i], read_u14(&v.params[i * 2u]));
+}
+
+// A part promised and not supplied is a caller bug rather than a short frame, and is said
+// so rather than written as a block of zeros a restore would believe.
+void test_the_builder_refuses_a_part_it_was_not_given(void) {
+    uint8_t buf[96] = {};
+    PresetHead h = sample_preset_head();
+
+    PresetBody no_params{};
+    no_params.name     = SAMPLE_NAME;
+    no_params.name_len = 1u;
+    TEST_ASSERT_EQUAL_UINT16(0u, build_preset(h, no_params, 0x01u, cmd::PRESET_DUMP_DATA,
+                                              buf, sizeof(buf)));
+
+    PresetBody no_name{};
+    no_name.params   = SAMPLE_PARAMS;
+    no_name.name_len = 4u;               // promised four bytes, handed none
+    TEST_ASSERT_EQUAL_UINT16(0u, build_preset(h, no_name, 0x01u, cmd::PRESET_DUMP_DATA,
+                                              buf, sizeof(buf)));
+}
+
+// Only the two commands parse_preset accepts, so a frame this builds is one it reads.
+void test_the_builder_refuses_a_command_the_parser_would_not_take(void) {
+    uint8_t buf[96] = {};
+    PresetBody b{};
+    b.params = SAMPLE_PARAMS;
+    TEST_ASSERT_EQUAL_UINT16(0u, build_preset(sample_preset_head(), b, 0x01u,
+                                              cmd::GLOBAL_DATA, buf, sizeof(buf)));
+}
+
+// Drops rather than truncates, like everything else Writer builds: half a preset frame
+// restores as garbage.
+void test_the_builder_refuses_a_short_buffer(void) {
+    uint8_t small[12] = {};
+    TEST_ASSERT_EQUAL_UINT16(0u, build_sample_preset(small, sizeof(small), 0x01u));
+}
+
+// The advertised maximum really does hold what the builder produces.
+void test_a_built_preset_fits_the_advertised_maximum(void) {
+    uint8_t tlv[16] = {};
+    PresetBody b{};
+    b.params   = SAMPLE_PARAMS;
+    b.name     = SAMPLE_NAME;
+    b.name_len = (uint8_t)(sizeof(SAMPLE_NAME) - 1u);
+    b.tlv      = tlv;
+    b.tlv_len  = sample_preset_tlv(tlv, sizeof(tlv));
+
+    const PresetHead h = sample_preset_head();
+    const uint16_t bound = preset_frame_max(h.param_count, b.name_len, (uint8_t)b.tlv_len);
+
+    uint8_t buf[96] = {};
+    const uint16_t n = build_preset(h, b, 0x01u, cmd::PRESET_DUMP_DATA, buf, sizeof(buf));
+    TEST_ASSERT_TRUE(n > 0);
+    TEST_ASSERT_TRUE_MESSAGE(n <= bound, "the frame outgrew the bound a product sizes from");
+    TEST_ASSERT_TRUE(all_data_bytes_7bit(buf, n));
+}
+
+// The slot is a bank and a program on the wire, most significant seven bits first. The
+// split and the join are one spelling each, and this is the pair holding them together.
+void test_the_slot_pair_round_trips(void) {
+    for (uint16_t slot : { (uint16_t)0u, (uint16_t)1u, (uint16_t)127u,
+                           (uint16_t)128u, (uint16_t)130u, (uint16_t)16383u }) {
+        TEST_ASSERT_EQUAL_UINT16(slot, slot_of(slot_bank(slot), slot_program(slot)));
+    }
+    TEST_ASSERT_EQUAL_UINT8(1u, slot_bank(130u));
+    TEST_ASSERT_EQUAL_UINT8(2u, slot_program(130u));
 }
 
 
@@ -812,6 +955,13 @@ int main(int, char**)
     RUN_TEST(test_preset_rejects_a_truncated_frame);
     RUN_TEST(test_preset_rejects_a_foreign_manufacturer);
     RUN_TEST(test_preset_rejects_an_unrelated_command);
+    RUN_TEST(test_the_preset_frame_is_a_fixed_point);
+    RUN_TEST(test_the_builder_writes_exactly_the_count_the_head_gives);
+    RUN_TEST(test_the_builder_refuses_a_part_it_was_not_given);
+    RUN_TEST(test_the_builder_refuses_a_command_the_parser_would_not_take);
+    RUN_TEST(test_the_builder_refuses_a_short_buffer);
+    RUN_TEST(test_a_built_preset_fits_the_advertised_maximum);
+    RUN_TEST(test_the_slot_pair_round_trips);
     RUN_TEST(test_uid_matches_its_own);
     RUN_TEST(test_uid_rejects_another_unit);
     RUN_TEST(test_uid_rejects_a_high_byte_difference);
