@@ -41,6 +41,11 @@ public:
     uint8_t  splash_frames  = 0;
     uint32_t last_splash_elapsed = 0;
 
+    // The name editor is the base's to draw, and draw_name_page() is protected with no
+    // caller in the library -- a product reaches it from a screen of its own. This id is
+    // that product, so the editor's pixels are reachable from here at all.
+    static constexpr uint8_t SCREEN_NAME_EDIT = 9u;
+
     // The state the base is holding, read back through the same protected members a
     // product hook reads. A field apply() dropped would otherwise be invisible where it
     // draws nothing on the screen under test — the name cursor, for one.
@@ -75,6 +80,7 @@ protected:
     {
         ++screens_drawn;
         last_screen_id = screen_id;
+        if (screen_id == SCREEN_NAME_EDIT) { draw_name_page(); return; }
         display::draw_text(0, 0, "PRODUCT");
     }
 
@@ -744,6 +750,57 @@ void test_the_shipped_clock_advances_over_the_reset_pulse(void) {
     TEST_ASSERT_EQUAL_UINT32(1016u, pedal_core::host_display::now_ms());
 }
 
+// ---------------------------------------------------------------------------
+// The name editor
+// ---------------------------------------------------------------------------
+
+// The cursor names a character slot of the name, and a product can push any byte into it.
+// Off the end it is not a wrong-looking screen: draw_name_page() copies `cursor` bytes into
+// a buffer the size of the name, and strncpy pads to n whatever the name's own length, so
+// the copy runs past the buffer by however far the cursor is past the name.
+void test_the_name_cursor_cannot_walk_off_the_name(void) {
+    TestCompositor c;
+    boot(c, 1000);
+    c.set_screen(TestCompositor::SCREEN_NAME_EDIT);
+    c.set_preset_name("AMP");
+    c.set_name_cursor(200u);
+    at(1010); c.update(1010);
+
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(15u, c.held().name_cursor,
+                                    "the cursor was left off the end of the name");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(1u, c.screens_drawn, "the editor never drew");
+}
+
+// The same guard covers a whole state pushed at once, because apply() goes through the
+// setters rather than around them.
+void test_an_applied_state_cannot_carry_the_cursor_off_the_name(void) {
+    TestCompositor c;
+    boot(c, 1000);
+    Compositor::ScreenState st;
+    st.screen = TestCompositor::SCREEN_NAME_EDIT;
+    std::strncpy(st.preset_name, "AMP", sizeof(st.preset_name) - 1);
+    st.name_cursor = 255u;
+    c.apply(st);
+    at(1010); c.update(1010);
+
+    TEST_ASSERT_EQUAL_UINT8(15u, c.held().name_cursor);
+}
+
+// Inside the name it is left alone: the clamp is a bound, not a rewrite.
+void test_a_cursor_inside_the_name_is_kept(void) {
+    TestCompositor c;
+    boot(c, 1000);
+    c.set_screen(TestCompositor::SCREEN_NAME_EDIT);
+    c.set_preset_name("Shimmer");
+    c.set_name_cursor(4u);
+    at(1010); c.update(1010);
+
+    TEST_ASSERT_EQUAL_UINT8(4u, c.held().name_cursor);
+
+    Frame f; display::capture(f);
+    TEST_ASSERT_TRUE_MESSAGE(frame_has_ink(f), "the name editor drew nothing");
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_a_state_change_reaches_the_framebuffer);
@@ -769,5 +826,8 @@ int main(int, char**) {
     RUN_TEST(test_names_differing_past_the_buffer_are_the_same_screen);
     RUN_TEST(test_a_table_of_screens_each_draws_its_own);
     RUN_TEST(test_the_shipped_clock_advances_over_the_reset_pulse);
+    RUN_TEST(test_the_name_cursor_cannot_walk_off_the_name);
+    RUN_TEST(test_an_applied_state_cannot_carry_the_cursor_off_the_name);
+    RUN_TEST(test_a_cursor_inside_the_name_is_kept);
     return UNITY_END();
 }

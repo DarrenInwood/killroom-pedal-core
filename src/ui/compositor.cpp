@@ -692,6 +692,15 @@ void Compositor::set_screen(uint8_t screen_id)
 
 void Compositor::set_name_cursor(uint8_t cursor)
 {
+    // The cursor names a character slot of the name, so it cannot leave it. The name holds
+    // sizeof(m_preset_name) - 1 characters and the byte after them is the terminator, so
+    // the last slot a cursor can sit on is two back from the end of the buffer.
+    //
+    // Clamped here rather than where it is drawn because this is the one place it is
+    // written: apply() pushes the whole screen through the setters, so this covers a state
+    // a product built by hand as well as a call it made directly.
+    constexpr uint8_t LAST_SLOT = (uint8_t)(sizeof(m_preset_name) - 2u);
+    if (cursor > LAST_SLOT) cursor = LAST_SLOT;
     if (m_name_cursor != cursor) { m_name_cursor = cursor; m_pacer.changed(); }
 }
 
