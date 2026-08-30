@@ -115,8 +115,16 @@ public:
         if (n == 0u || !carries(src)) return;
 
         if (n > 3u || msg[0] == 0xF0u) {
-            if (m_locked && m_owner != src) { queue_push(msg, n); return; }
-            emit(msg, n);
+            // A frame leaves whole or not at all, so it waits for three things: the jack,
+            // when another frame owns it; any frame already queued, so the order the sender
+            // chose survives; and room in the ring for the whole of it. That last one is
+            // what uart::tx_room() is for -- a frame begun with room for half of it reaches
+            // the receiver as a dump it cannot tell from a good one.
+            const bool waiting = (m_locked && m_owner != src)
+                              || m_queued > 0u
+                              || uart::tx_room() < frame_length(msg, n);
+            if (waiting) queue_push(msg, n);
+            else         emit(msg, n);
             if (!m_locked) queue_flush();
             return;
         }
@@ -138,8 +146,15 @@ public:
     // through owns the jack outright, so the queue holds until it ends.
     void pump()
     {
+        if (m_locked) return;
+
+        // Frames first, then short messages, which is the order they were given in: a frame
+        // only ever waits here because the jack or the ring was busy, and it was handed over
+        // before anything still sitting in the transmit queue.
+        queue_flush();
+
         MidiMessage next;
-        while (!m_locked && m_out.peek(next)) {
+        while (m_out.peek(next)) {
             if (uart::tx_room() < wire_length(next)) return;
             m_out.pop(next);
             emit_message(next);
@@ -159,6 +174,10 @@ public:
     // The pedal's own is judged by whether the jack carries its traffic at all, not by
     // the echo's rules: clock_thru governs forwarding somebody else's clock, and a pedal
     // generating one must not suppress its own.
+    //
+    // No room is asked for here either: one byte cannot be half-written, so what a full ring
+    // cannot take is already lost whole. That is the right loss for this family -- a clock
+    // byte held back until there is room would arrive late, which is worse than not at all.
     void realtime(Src src, uint8_t status)
     {
         const bool ok = (src == Src::Self) ? carries(src) : carries_realtime(src, status);
@@ -182,6 +201,12 @@ public:
     }
 
     // One byte of the frame that holds the jack, which also says the frame is alive.
+    //
+    // This is the one write that does not ask the ring for room, and cannot. A frame streams
+    // because it has no bound on its length and nowhere to be held whole, and its F0 is
+    // already downstream: dropping a byte from the middle truncates a frame the receiver is
+    // part-way through parsing, which is the outcome asking for room exists to avoid. Both
+    // jacks run at 31250 baud, so a frame arriving cannot outrun the copy leaving.
     void sysex_byte(uint8_t b, uint32_t now_ms)
     {
         uart::write(b);
@@ -194,8 +219,7 @@ public:
         if (!m_locked || m_owner != src) return;
         if (write_eox) uart::write(0xF7u);
         m_locked = false;
-        queue_flush();   // whole frames that waited for the jack
-        pump();          // then whatever the transmit queue is holding
+        pump();   // the frames that waited for the jack, then the transmit queue
     }
 
     // Has the frame holding the jack stopped coming?
@@ -242,6 +266,18 @@ private:
         const uint8_t st = m.status;
         const bool running = (st >= 0x80u && st < 0xF0u && st == m_running);
         return running ? (uint16_t)(m.len - 1u) : (uint16_t)m.len;
+    }
+
+    // The same question for a frame that emit() is about to write: how many bytes it costs
+    // on the wire right now, one fewer when its status is already the one the jack is on.
+    // Kept beside wire_length() because both answer for the writer they precede, and the
+    // two writers spell running status the same way.
+    uint16_t frame_length(const uint8_t* msg, uint16_t n) const
+    {
+        if (n == 0u) return 0u;
+        const uint8_t st = msg[0];
+        const bool running = (st >= 0x80u && st < 0xF0u && st == m_running);
+        return running ? (uint16_t)(n - 1u) : n;
     }
 
     // One queued message onto the jack, holding running status. Coalescing and eviction
@@ -307,15 +343,24 @@ private:
         for (uint16_t i = 0; i < n; ++i) m_queue[m_queued++] = b[i];
     }
 
+    // Let the waiting frames out, oldest first, for as long as the ring can take the whole
+    // of the next one. One that will not fit yet stays queued with everything behind it, so
+    // the order holds and no frame is begun that the wire cannot finish; the next pump()
+    // tries again. Nothing here waits on the wire.
     void queue_flush()
     {
         uint16_t i = 0;
         while (i < m_queued) {
-            const uint8_t n = m_queue[i++];
-            emit(&m_queue[i], n);
-            i = (uint16_t)(i + n);
+            const uint8_t n = m_queue[i];
+            if (uart::tx_room() < frame_length(&m_queue[i + 1u], n)) break;
+            emit(&m_queue[i + 1u], n);
+            i = (uint16_t)(i + 1u + n);
         }
-        m_queued = 0u;
+        if (i == 0u) return;
+
+        // Close the gap the flushed frames left, so the queue stays packed from the front.
+        for (uint16_t j = i; j < m_queued; ++j) m_queue[j - i] = m_queue[j];
+        m_queued = (uint16_t)(m_queued - i);
     }
 
     midi_handler::Config m_config{};

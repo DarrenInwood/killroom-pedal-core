@@ -417,6 +417,65 @@ void test_a_message_is_never_begun_without_room_for_all_of_it(void) {
     TEST_ASSERT_EQUAL_UINT16(1u, g_r->pending());
 }
 
+// The same rule for a frame, which is the case the room check exists for: a preset dump
+// begun with room for half of it reaches the receiver as one it cannot tell from a good
+// one. The jack is free here -- only the ring is short -- so this is the path that writes
+// the frame straight out rather than the one that queues it behind a stream.
+void test_a_frame_is_never_begun_without_room_for_all_of_it(void) {
+    configure(OutMode::Merge);
+    const std::vector<uint8_t> dump = { 0xF0, 0x7D, 0x01, 0x11, 0x22, 0x33, 0x44, 0xF7 };
+
+    uart::g_room = 4u;                       // room for half of it
+    send(Src::Self, dump);
+    TEST_ASSERT_TRUE_MESSAGE(uart::g_wire.empty(), "a frame was begun that the ring could not finish");
+
+    uart::g_room = 0xFFFFu;                  // the ring drains
+    g_r->pump();
+    TEST_ASSERT_TRUE_MESSAGE(wire_is(dump), "the frame that waited never left whole");
+}
+
+// A frame that had to wait keeps its place. One offered while another is still queued goes
+// behind it, so the order the sender chose is the order the receiver reads.
+void test_a_frame_waits_behind_the_frames_already_queued(void) {
+    configure(OutMode::Merge);
+    const std::vector<uint8_t> first  = { 0xF0, 0x7D, 0x01, 0xF7 };
+    const std::vector<uint8_t> second = { 0xF0, 0x7D, 0x02, 0xF7 };
+
+    uart::g_room = 0u;
+    send(Src::Self, first);
+    send(Src::Self, second);
+    TEST_ASSERT_TRUE(uart::g_wire.empty());
+
+    uart::g_room = 0xFFFFu;
+    g_r->pump();
+    std::vector<uint8_t> both = first;
+    both.insert(both.end(), second.begin(), second.end());
+    TEST_ASSERT_TRUE_MESSAGE(wire_is(both), "the frames left out of order");
+}
+
+// Room for the short frame but not the long one behind it lets exactly the short one out.
+// The other holds its place rather than being dropped or truncated, and leaves on the pump
+// that has room for the whole of it.
+void test_a_partial_flush_leaves_the_rest_queued_in_order(void) {
+    configure(OutMode::Merge);
+    const std::vector<uint8_t> shorter = { 0xF0, 0x7D, 0x01, 0xF7 };
+    const std::vector<uint8_t> longer  = { 0xF0, 0x7D, 0x02, 0x11, 0x22, 0x33, 0x44, 0xF7 };
+
+    uart::g_room = 0u;
+    send(Src::Self, shorter);
+    send(Src::Self, longer);
+
+    uart::g_room = 4u;                       // the short frame fits; the long one does not
+    g_r->pump();
+    TEST_ASSERT_TRUE_MESSAGE(wire_is(shorter), "a frame was begun that the ring could not finish");
+
+    uart::g_room = 0xFFFFu;
+    g_r->pump();
+    std::vector<uint8_t> both = shorter;
+    both.insert(both.end(), longer.begin(), longer.end());
+    TEST_ASSERT_TRUE_MESSAGE(wire_is(both), "the frame left behind never left");
+}
+
 // Running status is decided here rather than when the message was queued, because
 // coalescing and eviction rewrite the queue after a message enters it. A sweep that
 // coalesced to one value still elides its status against the message before it.
@@ -578,6 +637,9 @@ int main(int, char**)
     RUN_TEST(test_a_frame_too_large_for_the_queue_is_dropped_whole);
     RUN_TEST(test_a_full_ring_holds_the_message_rather_than_blocking);
     RUN_TEST(test_a_message_is_never_begun_without_room_for_all_of_it);
+    RUN_TEST(test_a_frame_is_never_begun_without_room_for_all_of_it);
+    RUN_TEST(test_a_frame_waits_behind_the_frames_already_queued);
+    RUN_TEST(test_a_partial_flush_leaves_the_rest_queued_in_order);
     RUN_TEST(test_running_status_is_decided_at_the_drain);
     RUN_TEST(test_running_status_is_correct_after_an_eviction);
     RUN_TEST(test_the_queue_waits_for_a_streaming_frame);
