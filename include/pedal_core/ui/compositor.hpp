@@ -262,17 +262,13 @@ private:
     void draw_param_grid();
     void draw_focus_panel(uint16_t prog);
     void draw_banner(uint16_t prog);
-    void draw_save(uint32_t elapsed);
+    void draw_save();
     void draw_title_page_chip();
     static void draw_check(uint8_t x, uint8_t y);
 
-    // When a frame is due and what belongs on it. Every timing constant except the one
-    // below is the pacer's; this class paints what it is told to.
+    // When a frame is due and what belongs on it. Every timing constant is the pacer's;
+    // this class paints what it is told to.
     FramePacer m_pacer;
-
-    // How long the save animation spends on SAVING before it becomes SAVED. A drawing
-    // threshold within the frame, not a decision about when to draw one.
-    static constexpr uint32_t SAVE_SAVING_MS = 500u;
 
     // What the transients say, held for the frame that draws them.
     char     m_panel_name[16] = {};

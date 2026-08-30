@@ -375,8 +375,10 @@ void test_a_faulted_boot_runs_the_fault_then_the_splash(void) {
     TEST_ASSERT_EQUAL_UINT8(1, c.splash_frames);
 }
 
-// The save animation owns the whole screen: no product screen is drawn under it.
-void test_the_save_animation_owns_the_screen(void) {
+// The save confirmation owns the whole screen: no product screen is drawn under it, and it
+// is one still frame from the first tick to the last. A write lands in a millisecond or two,
+// so there is nothing in flight for a progress phase to report.
+void test_the_save_confirmation_owns_the_screen(void) {
     TestCompositor c;
     boot(c, 1000);
     c.set_screen(7u);
@@ -387,16 +389,17 @@ void test_the_save_animation_owns_the_screen(void) {
     at(1100); c.update(1100);
     TEST_ASSERT_EQUAL_UINT8(1, c.screens_drawn);          // the product screen stood down
 
-    Frame saving; display::capture(saving);
-    TEST_ASSERT_TRUE(frame_has_ink(saving));
+    Frame first; display::capture(first);
+    TEST_ASSERT_TRUE(frame_has_ink(first));
 
-    // SAVING becomes SAVED partway through, so the frame changes without the state doing.
-    at(1700); c.update(1700);
-    Frame saved; display::capture(saved);
-    TEST_ASSERT_FALSE(frames_match(saving, saved));
+    // The same frame the whole way: the confirmation a player sees in the first moment is
+    // the one they are still reading at the end of its dwell.
+    at(1400); c.update(1400);
+    Frame later; display::capture(later);
+    TEST_ASSERT_TRUE(frames_match(first, later));
 
-    // And the screen comes back at the end of the animation.
-    at(2300); c.update(2300);
+    // And the screen comes back on the dwell every other transient uses.
+    at(1100 + DISPLAY_PARAM_SHOW_MS); c.update(1100 + DISPLAY_PARAM_SHOW_MS);
     TEST_ASSERT_EQUAL_UINT8(2, c.screens_drawn);
 }
 
@@ -663,7 +666,7 @@ int main(int, char**) {
     RUN_TEST(test_the_panel_tick_never_arrives_before_its_gauge);
     RUN_TEST(test_the_splash_animates_then_gives_the_screen_up);
     RUN_TEST(test_a_faulted_boot_runs_the_fault_then_the_splash);
-    RUN_TEST(test_the_save_animation_owns_the_screen);
+    RUN_TEST(test_the_save_confirmation_owns_the_screen);
     RUN_TEST(test_a_slide_settles_on_its_destination);
     RUN_TEST(test_a_slide_under_a_splash_is_refused);
     RUN_TEST(test_apply_carries_every_field);

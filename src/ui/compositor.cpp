@@ -484,19 +484,17 @@ void Compositor::draw_check(uint8_t x, uint8_t y)
 }
 
 // Save animation: a filling progress bar under "SAVING", then a checkmark + "SAVED".
-void Compositor::draw_save(uint32_t elapsed)
+// The whole screen, for as long as the overlay stands: a checkmark and the word. A write
+// completes in a millisecond or two, so there is no progress to report — a bar would be a
+// picture of waiting for something that has already happened, and it would spend the front
+// of the confirmation's dwell saying less than the confirmation does.
+void Compositor::draw_save()
 {
     display::clear();
-    if (elapsed < SAVE_SAVING_MS) {
-        draw_centered(display::FONT_TEXT, 0, OLED_WIDTH, 14, "SAVING");
-        const uint8_t v = (uint8_t)(elapsed * 127u / SAVE_SAVING_MS);
-        display::draw_gauge(14, 36, (uint8_t)(OLED_WIDTH - 28u), 10u, v);
-    } else {
-        const uint8_t tw = display::text_width(display::FONT_NAME, "SAVED");
-        const uint8_t x  = (uint8_t)((OLED_WIDTH - (tw + 18u)) / 2u);
-        draw_check(x, 24u);
-        display::draw_text(display::FONT_NAME, (uint8_t)(x + 18u), 22u, "SAVED");
-    }
+    const uint8_t tw = display::text_width(display::FONT_NAME, "SAVED");
+    const uint8_t x  = (uint8_t)((OLED_WIDTH - (tw + 18u)) / 2u);
+    draw_check(x, 24u);
+    display::draw_text(display::FONT_NAME, (uint8_t)(x + 18u), 22u, "SAVED");
 }
 
 // ---------------------------------------------------------------------------
@@ -554,12 +552,12 @@ void Compositor::update(uint32_t now)
             display::draw_framebuffer(m_slide_to);   // settle on the destination
             break;
 
-        // The save animation owns the whole screen; the focus panel and the banner are
+        // The save confirmation owns the whole screen; the focus panel and the banner are
         // drawn over the normal screen (or over whichever product screen draw_normal()
         // dispatched to), so what they do not cover stays on view.
         case FramePacer::What::FrameSave:
             m_icon_now = now;
-            draw_save(d.arg);
+            draw_save();
             break;
 
         case FramePacer::What::Frame:
