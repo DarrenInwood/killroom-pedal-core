@@ -135,7 +135,7 @@ public:
 
     // --- what this tick should do -------------------------------------------
 
-    Decision decide(uint32_t now, bool display_busy)
+    Decision decide(uint32_t now)
     {
         Decision d;
 
@@ -144,8 +144,7 @@ public:
         if (m_splash_expiry_ms != 0u) {
             if (now < m_splash_expiry_ms) {
                 // Animate the splash at the overlay cadence; a static hold just waits.
-                if (m_splash_active && since(now, m_last_draw_ms) >= ANIM_FRAME_MS
-                        && !display_busy) {
+                if (m_splash_active && since(now, m_last_draw_ms) >= ANIM_FRAME_MS) {
                     m_last_draw_ms = now;
                     d.what = What::SplashFrame;
                     d.arg  = since(now, m_splash_start_ms);
@@ -173,7 +172,6 @@ public:
         if (m_slide_active) {
             const uint32_t elapsed = since(now, m_slide_start_ms);
             if (elapsed < m_slide_ms && since(now, m_last_draw_ms) < ANIM_FRAME_MS) return d;
-            if (display_busy) return d;
             m_last_draw_ms = now;
             if (elapsed >= m_slide_ms) {
                 m_slide_active = false;
@@ -204,7 +202,6 @@ public:
         // delays a knob or footswitch.
         const uint32_t cap = animating ? ANIM_FRAME_MS : REFRESH_MS;
         if (!m_dirty && since(now, m_last_draw_ms) < cap) return d;
-        if (display_busy) return d;
 
         m_dirty        = false;
         m_last_draw_ms = now;

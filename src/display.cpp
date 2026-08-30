@@ -309,13 +309,6 @@ void display::update()
     }
 }
 
-// The SPI flush is fast (~1.4 ms for a full frame at 6 MHz) and blocking, so the
-// async page-pump the I2C path needed is unnecessary: update_async() just does a
-// full flush, the display is never "busy" between calls, and pump() is a no-op.
-// These keep display_manager's frame-pacing API intact.
-bool display::update_async() { update(); return true; }
-void display::pump()         {}
-bool display::update_busy()  { return false; }
 
 uint8_t display::draw_char(uint8_t x, uint8_t page, char c)
 {
