@@ -140,6 +140,16 @@ public:
     virtual void show_splash();
     virtual void show_storage_fault();
     virtual void begin_slide(int8_t dir);
+    // A slide of one band of the screen: only the pixel rows y0..y1 composite, and every
+    // row outside the band is left to the ordinary redraw, which has already drawn the
+    // destination there by the time the first step lands. Pixel rows rather than pages,
+    // because a band edge lands wherever the caller's layout puts it — the extents are the
+    // caller's, and what is in them is nothing this library knows.
+    //
+    // `duration_ms` is how long the transition runs, said outright rather than defaulted:
+    // a band is a shorter journey than a full-screen crossing and generally wants a
+    // shorter time to make it, which is the reason a caller reaches for this form.
+    virtual void begin_slide_band(int8_t dir, uint8_t y0, uint8_t y1, uint32_t duration_ms);
 
 protected:
     virtual ~Compositor() = default;
@@ -257,6 +267,8 @@ protected:
 
 private:
     void draw_normal(bool transient_owns_bottom_row = false);
+    // What both begin_slide forms do once the pacer has accepted the transition.
+    void arm_slide(FramePacer::SlideStart start, int8_t dir, uint8_t y0, uint8_t y1);
     void draw_header(uint32_t now);
     void draw_context_line();
     void draw_param_grid();
@@ -278,8 +290,11 @@ private:
     char     m_banner[32] = {};
     bool     m_banner_bottom = false;
 
-    // The two frames a transition composites, and which way it runs.
+    // The two frames a transition composites, which way it runs, and the band of pixel
+    // rows it moves — the whole screen unless the caller asked for less.
     int8_t   m_slide_dir = 1;
+    uint8_t  m_slide_y0  = 0u;
+    uint8_t  m_slide_y1  = (uint8_t)(OLED_HEIGHT - 1u);
     uint8_t  m_slide_from[OLED_PAGES][OLED_WIDTH];
     uint8_t  m_slide_to  [OLED_PAGES][OLED_WIDTH];
 

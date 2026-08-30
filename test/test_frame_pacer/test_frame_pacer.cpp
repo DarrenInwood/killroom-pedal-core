@@ -264,6 +264,45 @@ void test_a_slide_captures_steps_and_settles(void) {
     TEST_ASSERT_EQUAL_INT((int)What::Frame, (int)p.decide(began + FramePacer::SLIDE_MS + 1u, false).what);
 }
 
+// A transition runs for the duration it was given. A caller with two kinds of slide — a
+// short move of one band of the screen and the full-screen crossing — asks for each by
+// duration, and the compositor reads the one in flight back to do its offset arithmetic.
+void test_a_slide_runs_for_the_duration_it_was_given(void) {
+    uint32_t t = 0; FramePacer p = settled(t);
+    const uint32_t fast = 60u;                                 // shorter than SLIDE_MS
+    TEST_ASSERT_EQUAL_INT((int)SlideStart::Ready, (int)p.slide(fast));
+    TEST_ASSERT_EQUAL_UINT32(fast, p.slide_ms());
+
+    const uint32_t began = t + REFRESH_MS;
+    p.decide(began, false);                                    // capture, and the first step
+    const FramePacer::Decision step = p.decide(began + ANIM_FRAME_MS, false);
+    TEST_ASSERT_EQUAL_INT((int)What::SlideStep, (int)step.what);
+    TEST_ASSERT_EQUAL_UINT32(ANIM_FRAME_MS, step.arg);
+
+    // It ends on its own duration, where SLIDE_MS would still have it stepping.
+    TEST_ASSERT_EQUAL_INT((int)What::SlideStep, (int)p.decide(began + fast - ANIM_FRAME_MS, false).what);
+    TEST_ASSERT_EQUAL_INT((int)What::SlideSettle, (int)p.decide(began + fast, false).what);
+    TEST_ASSERT_EQUAL_INT((int)What::Frame, (int)p.decide(began + fast + 1u, false).what);
+}
+
+// A slide that does not ask for a duration runs for SLIDE_MS, the speed a full-screen
+// crossing keeps.
+void test_a_slide_without_a_duration_runs_for_the_default(void) {
+    uint32_t t = 0; FramePacer p = settled(t);
+    p.slide(40u);                                              // a fast one, then settled
+    const uint32_t began = t + REFRESH_MS;
+    p.decide(began, false);
+    p.decide(began + 40u, false);
+
+    TEST_ASSERT_EQUAL_INT((int)SlideStart::Ready, (int)p.slide());
+    TEST_ASSERT_EQUAL_UINT32(FramePacer::SLIDE_MS, p.slide_ms());
+    const uint32_t again = began + 40u + REFRESH_MS;
+    p.decide(again, false);
+    TEST_ASSERT_EQUAL_INT((int)What::SlideStep, (int)p.decide(again + 40u, false).what);
+    TEST_ASSERT_EQUAL_INT((int)What::SlideSettle,
+                          (int)p.decide(again + FramePacer::SLIDE_MS, false).what);
+}
+
 // A transition steps at the animation cadence, not the idle cap.
 void test_a_slide_steps_at_the_animation_cadence(void) {
     uint32_t t = 0; FramePacer p = settled(t);
@@ -339,6 +378,8 @@ int main(int, char**) {
     RUN_TEST(test_a_faulted_boot_runs_the_fault_then_the_splash);
     RUN_TEST(test_the_fault_hold_queues_the_splash_only_once);
     RUN_TEST(test_a_slide_captures_steps_and_settles);
+    RUN_TEST(test_a_slide_runs_for_the_duration_it_was_given);
+    RUN_TEST(test_a_slide_without_a_duration_runs_for_the_default);
     RUN_TEST(test_a_slide_steps_at_the_animation_cadence);
     RUN_TEST(test_a_slide_closes_an_open_transient_first);
     RUN_TEST(test_a_slide_is_refused_under_a_splash);

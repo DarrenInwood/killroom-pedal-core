@@ -92,6 +92,16 @@ namespace display {
     void compose_hslide(const uint8_t from[OLED_PAGES][OLED_WIDTH],
                         const uint8_t to[OLED_PAGES][OLED_WIDTH], uint8_t offset, int8_t dir);
 
+    // The same slide over a band of PIXEL rows y0..y1 (inclusive): every row outside the
+    // band keeps whatever the framebuffer already holds, so a caller can slide one region
+    // of the screen while the rest is drawn live. A band edge that falls mid-page is
+    // masked row by row, which is the point of it — a page-granular band would strand the
+    // descender rows of text that is sliding, or drag along a label that is not.
+    // y1 past the last row is clamped to it; y0 > y1 draws nothing.
+    void compose_hslide_band(const uint8_t from[OLED_PAGES][OLED_WIDTH],
+                             const uint8_t to[OLED_PAGES][OLED_WIDTH], uint8_t offset,
+                             int8_t dir, uint8_t y0, uint8_t y1);
+
 #ifdef DISPLAY_SELFTEST
     // Bring-up diagnostic (build with -D DISPLAY_SELFTEST).
     // Assumes init() has run, then loops forever cycling three visually distinct stages so a

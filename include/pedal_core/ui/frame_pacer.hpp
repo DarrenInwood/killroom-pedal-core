@@ -14,8 +14,9 @@
 // last frame — arrives as a bool. So the whole machine runs on a host with no framebuffer,
 // no driver and no fakes, which is what makes the pacing testable at all.
 //
-// The pixel arithmetic stays with the compositor: a decision carries a duration, and the
-// caller turns that into an offset across its own screen width.
+// The pixel arithmetic stays with the compositor: a decision carries the milliseconds a
+// transition has run and the pacer says how long it runs for, and the caller turns the two
+// into an offset across its own screen width.
 namespace pedal_core::ui {
 
 class FramePacer {
@@ -29,8 +30,8 @@ public:
         Nothing,        // not due; the frame on the glass still stands
         SplashFrame,    // draw the splash art; arg = ms since it began
         SplashRestart,  // the fault hold is over, and the splash follows it
-        SlideStep,      // compose the transition; arg = ms into SLIDE_MS
-        SlideSettle,    // the transition is over; show the destination frame
+        SlideStep,      // compose the transition; arg = ms into its duration
+        SlideSettle,    // the transition is over; draw the frame the state stands at now
         Frame,          // the ordinary composed frame, nothing over it
         FramePanel,     // the frame with the param focus panel; arg = unroll progress 0..256
         FrameBanner,    // the frame with a message banner; arg = progress 0..256
@@ -54,8 +55,8 @@ public:
         RedrawFirst,  // a transient was open and has been closed: redraw, then capture
     };
 
-    // How long the transition itself runs. Public because the caller turns a decision's
-    // elapsed time into an offset across its own screen width.
+    // How long a transition runs when the caller does not say. Public because the caller
+    // turns a decision's elapsed time into an offset across its own screen width.
     static constexpr uint32_t SLIDE_MS = 150u;
 
     // --- what the producers say ---------------------------------------------
@@ -99,15 +100,23 @@ public:
     // slide is in flight. An open transient is closed here rather than sliding with the
     // frame: it would animate as part of the transition and then reappear over the screen
     // it landed on, so the caller redraws without it before capturing the "from" frame.
-    SlideStart slide()
+    //
+    // `duration_ms` is how long this one runs: a move of one band of the screen is a
+    // shorter journey than a full-screen crossing and wants a shorter time to make it.
+    SlideStart slide(uint32_t duration_ms = SLIDE_MS)
     {
         if (m_splash_expiry_ms != 0u || m_slide_active || m_slide_pending) return SlideStart::Refused;
         const bool had_overlay = (m_overlay != Overlay::None);
         m_overlay       = Overlay::None;
         m_slide_pending = true;
+        m_slide_ms      = duration_ms;
         m_dirty         = true;
         return had_overlay ? SlideStart::RedrawFirst : SlideStart::Ready;
     }
+
+    // How long the slide accepted last runs, for the caller turning a step's elapsed ms
+    // into an offset across its own screen width.
+    uint32_t slide_ms() const { return m_slide_ms; }
 
     // Milliseconds from `then` to `now`, and zero when `then` has not been reached yet.
     //
@@ -163,10 +172,10 @@ public:
         }
         if (m_slide_active) {
             const uint32_t elapsed = since(now, m_slide_start_ms);
-            if (elapsed < SLIDE_MS && since(now, m_last_draw_ms) < ANIM_FRAME_MS) return d;
+            if (elapsed < m_slide_ms && since(now, m_last_draw_ms) < ANIM_FRAME_MS) return d;
             if (display_busy) return d;
             m_last_draw_ms = now;
-            if (elapsed >= SLIDE_MS) {
+            if (elapsed >= m_slide_ms) {
                 m_slide_active = false;
                 m_dirty        = true;
                 d.what         = What::SlideSettle;
@@ -253,6 +262,7 @@ private:
     bool     m_slide_pending  = false;
     bool     m_slide_active   = false;
     uint32_t m_slide_start_ms = 0u;
+    uint32_t m_slide_ms       = SLIDE_MS;
 };
 
 }  // namespace pedal_core::ui

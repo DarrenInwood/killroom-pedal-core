@@ -289,6 +289,114 @@ void test_compose_hslide_offset_clamped_to_width(void) {
         TEST_ASSERT_EQUAL_UINT8((uint8_t)(128u + c), s_fb[0][c]);   // every column is `to`
 }
 
+// --- the band form ---------------------------------------------------------
+// compose_hslide_band composites the same slide over a range of PIXEL rows and leaves
+// every row outside it standing. Assert both halves of that against the full-screen
+// compositor: inside the band the framebuffer is bit-for-bit what compose_hslide writes —
+// the masked edge pages held against the whole-byte path of the same slide — and outside
+// it is bit-for-bit what was there before the call. Rows rather than pages is the whole
+// point, so a band whose edges fall mid-page has to keep the other rows of those pages.
+static void assert_band(uint8_t y0, uint8_t y1, uint8_t offset, int8_t dir) {
+    static uint8_t from[OLED_PAGES][OLED_WIDTH], to[OLED_PAGES][OLED_WIDTH];
+    fill_slide_frames(from, to);
+
+    // A background belonging to neither frame, so a row the band should not have touched
+    // is recognisable however it went wrong.
+    uint8_t before[OLED_PAGES][OLED_WIDTH];
+    for (uint8_t p = 0; p < OLED_PAGES; ++p)
+        for (uint8_t c = 0; c < OLED_WIDTH; ++c)
+            before[p][c] = (uint8_t)(0x5Au ^ (uint8_t)(p * 7u + c));
+
+    uint8_t full[OLED_PAGES][OLED_WIDTH];
+    display::compose_hslide(from, to, offset, dir);
+    memcpy(full, s_fb, sizeof(full));
+
+    display::draw_framebuffer(before);
+    display::compose_hslide_band(from, to, offset, dir, y0, y1);
+
+    // The first row that disagrees, reported as the assertion's value: -1 is a pass.
+    int first_bad = -1;
+    for (uint8_t y = 0; y < OLED_HEIGHT && first_bad < 0; ++y) {
+        const uint8_t page = (uint8_t)(y >> 3), bit = (uint8_t)(1u << (y & 7u));
+        const bool inside = (y >= y0 && y <= y1);
+        for (uint8_t c = 0; c < OLED_WIDTH; ++c) {
+            const uint8_t want = (uint8_t)((inside ? full[page][c] : before[page][c]) & bit);
+            if ((uint8_t)(s_fb[page][c] & bit) != want) { first_bad = (int)y; break; }
+        }
+    }
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-1, first_bad,
+        "a row inside the band did not slide, or one outside it moved (value = the row)");
+}
+
+// The caller's band is the parameter grid, y27-56: it starts partway down page 3 and
+// ends on the first row of page 7, whose remaining rows carry the static footswitch
+// labels. Both ends, both directions, and both endpoints of the transition.
+void test_compose_hslide_band_keeps_the_rows_outside_it(void) {
+    assert_band(27u, 56u, 30u, +1);
+    assert_band(27u, 56u, 30u, -1);
+    assert_band(27u, 56u, 0u,  +1);            // nothing of `to` on screen yet
+    assert_band(27u, 56u, OLED_WIDTH, -1);     // fully arrived
+}
+
+// A page-aligned band is whole bytes with no edge mask at either end.
+void test_compose_hslide_band_page_aligned_writes_whole_pages(void) {
+    assert_band(24u, 39u, 30u, +1);
+    assert_band(24u, 39u, 70u, -1);
+}
+
+// A band of a single row, mid-page and at each edge of the screen.
+void test_compose_hslide_band_of_one_row(void) {
+    assert_band(56u, 56u, 30u, +1);   // y0 == y1, the first row of the last page
+    assert_band(59u, 59u, 30u, -1);   // mid-page
+    assert_band(0u,  0u,  30u, +1);   // the top row of the screen
+    assert_band(63u, 63u, 30u, +1);   // and the bottom
+}
+
+// A band covering every row is the full-screen slide. The bytes below are the same
+// hand-computed mapping the compose_hslide cases pin rather than a reading taken off the
+// driver, so the banded path is held to the documented slide in its own right — and then
+// to the full-screen form, byte for byte, over every page.
+void test_compose_hslide_band_over_the_whole_screen_is_the_full_slide(void) {
+    static uint8_t from[OLED_PAGES][OLED_WIDTH], to[OLED_PAGES][OLED_WIDTH];
+    fill_slide_frames(from, to);
+    const uint8_t last = (uint8_t)(OLED_HEIGHT - 1u);
+
+    display::compose_hslide_band(from, to, 30u, +1, 0u, last);   // keep = 128 - 30 = 98
+    TEST_ASSERT_EQUAL_UINT8(30,  s_fb[2][0]);      // from col 0+30
+    TEST_ASSERT_EQUAL_UINT8(127, s_fb[2][97]);     // from col 97+30 (last `from`)
+    TEST_ASSERT_EQUAL_UINT8(128, s_fb[2][98]);     // to col 98-98=0 (first `to`)
+    TEST_ASSERT_EQUAL_UINT8(157, s_fb[2][127]);    // to col 127-98=29 -> 128+29
+
+    display::compose_hslide_band(from, to, 30u, -1, 0u, last);
+    TEST_ASSERT_EQUAL_UINT8(226, s_fb[4][0]);      // to col 98+0 -> 128+98
+    TEST_ASSERT_EQUAL_UINT8(255, s_fb[4][29]);     // to col 98+29=127 (last `to`)
+    TEST_ASSERT_EQUAL_UINT8(0,   s_fb[4][30]);     // from col 30-30=0 (first `from`)
+    TEST_ASSERT_EQUAL_UINT8(97,  s_fb[4][127]);    // from col 127-30=97
+
+    uint8_t full[OLED_PAGES][OLED_WIDTH];
+    display::compose_hslide(from, to, 45u, +1);
+    memcpy(full, s_fb, sizeof(full));
+
+    display::clear();
+    display::compose_hslide_band(from, to, 45u, +1, 0u, last);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(&full[0][0], &s_fb[0][0], OLED_PAGES * OLED_WIDTH);
+}
+
+// A band past the bottom of the screen stops at the last row rather than indexing off
+// the end of the framebuffer, and one that ends before it starts is no band at all.
+void test_compose_hslide_band_clamps_and_ignores_an_empty_band(void) {
+    assert_band(60u, 200u, 30u, +1);           // clamped to 60..63
+
+    static uint8_t from[OLED_PAGES][OLED_WIDTH], to[OLED_PAGES][OLED_WIDTH];
+    fill_slide_frames(from, to);
+    uint8_t before[OLED_PAGES][OLED_WIDTH];
+    for (uint8_t p = 0; p < OLED_PAGES; ++p)
+        for (uint8_t c = 0; c < OLED_WIDTH; ++c) before[p][c] = (uint8_t)(p * 31u + c);
+    display::draw_framebuffer(before);
+    display::compose_hslide_band(from, to, 30u, +1, 40u, 39u);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(&before[0][0], &s_fb[0][0], OLED_PAGES * OLED_WIDTH);
+}
+
 // draw_framebuffer copies a full page-format bitmap verbatim.
 void test_draw_framebuffer_copies(void) {
     uint8_t src[OLED_PAGES][OLED_WIDTH];
@@ -403,6 +511,11 @@ int main(int, char**) {
     RUN_TEST(test_compose_hslide_dir_pos_slides_to_in_from_right);
     RUN_TEST(test_compose_hslide_dir_neg_slides_to_in_from_left);
     RUN_TEST(test_compose_hslide_offset_clamped_to_width);
+    RUN_TEST(test_compose_hslide_band_keeps_the_rows_outside_it);
+    RUN_TEST(test_compose_hslide_band_page_aligned_writes_whole_pages);
+    RUN_TEST(test_compose_hslide_band_of_one_row);
+    RUN_TEST(test_compose_hslide_band_over_the_whole_screen_is_the_full_slide);
+    RUN_TEST(test_compose_hslide_band_clamps_and_ignores_an_empty_band);
     RUN_TEST(test_draw_framebuffer_copies);
     RUN_TEST(test_flush_api_is_non_blocking_noop);
     RUN_TEST(test_fill_rect_fills_region);

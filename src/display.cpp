@@ -557,9 +557,24 @@ void display::selftest()
 void display::compose_hslide(const uint8_t from[OLED_PAGES][OLED_WIDTH],
                              const uint8_t to[OLED_PAGES][OLED_WIDTH], uint8_t offset, int8_t dir)
 {
+    compose_hslide_band(from, to, offset, dir, 0u, (uint8_t)(OLED_HEIGHT - 1u));
+}
+
+void display::compose_hslide_band(const uint8_t from[OLED_PAGES][OLED_WIDTH],
+                                  const uint8_t to[OLED_PAGES][OLED_WIDTH], uint8_t offset,
+                                  int8_t dir, uint8_t y0, uint8_t y1)
+{
     if (offset > OLED_WIDTH) offset = OLED_WIDTH;
+    if (y1 >= OLED_HEIGHT) y1 = (uint8_t)(OLED_HEIGHT - 1u);
+    if (y0 > y1) return;
     const uint8_t keep = (uint8_t)(OLED_WIDTH - offset);  // columns of `from` still visible
-    for (uint8_t page = 0; page < OLED_PAGES; ++page) {
+    for (uint8_t page = (uint8_t)(y0 >> 3); page <= (uint8_t)(y1 >> 3); ++page) {
+        // Which rows of this page the band covers: all eight through its interior, and a
+        // mask on the page an edge falls inside.
+        const uint8_t top  = (uint8_t)(page << 3);
+        const uint8_t lo   = (y0 > top) ? (uint8_t)(y0 - top) : 0u;
+        const uint8_t hi   = (y1 < (uint8_t)(top + 7u)) ? (uint8_t)(y1 - top) : 7u;
+        const uint8_t mask = (uint8_t)(((1u << (hi - lo + 1u)) - 1u) << lo);
         for (uint8_t c = 0; c < OLED_WIDTH; ++c) {
             uint8_t v;
             if (dir >= 0) {
@@ -569,7 +584,9 @@ void display::compose_hslide(const uint8_t from[OLED_PAGES][OLED_WIDTH],
                 // `from` exits right; `to` enters from the left.
                 v = (c >= offset) ? from[page][(uint8_t)(c - offset)] : to[page][(uint8_t)(keep + c)];
             }
-            s_fb[page][c] = v;
+            // Whole bytes where the band owns the page; read-modify-write at its edges.
+            if (mask == 0xFFu) s_fb[page][c] = v;
+            else               s_fb[page][c] = (uint8_t)((s_fb[page][c] & (uint8_t)~mask) | (v & mask));
         }
     }
 }
