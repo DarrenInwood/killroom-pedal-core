@@ -14,19 +14,11 @@
 namespace display {
     void init();
     void clear();
-    void update();         // flush framebuffer to display (blocking)
-
-    // Flush the framebuffer to the display. The SPI burst is fast enough (~1.4 ms
-    // for a full frame at 6 MHz) to complete in one call, so this is a full blocking
-    // flush that always returns true; it keeps display_manager's frame-pacing API
-    // uniform. (see display.cpp)
-    bool update_async();
-
-    // Frame-pacing hook, called every superloop wake. A no-op: update_async() flushes
-    // synchronously, so there is no in-progress frame to advance between wakes.
-    void pump();
-
-    bool update_busy();    // always false — the flush completes within update_async()
+    // Flush the framebuffer to the display. Blocking, and fast enough to be: the SPI
+    // burst is about 1.4 ms for a full frame at 6 MHz, which is inside one superloop
+    // wake at any frame rate this family paces to. Every controller here flushes the
+    // same way, so there is nothing for a caller to ask about or wait on.
+    void update();
 
     // Draw a character at column x (pixels), page row (0-7).
     // Returns x position after the character (for chaining).

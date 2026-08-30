@@ -515,7 +515,7 @@ void Compositor::init()
 
 bool Compositor::update(uint32_t now)
 {
-    const FramePacer::Decision d = m_pacer.decide(now, display::update_busy());
+    const FramePacer::Decision d = m_pacer.decide(now);
 
     // A slide needs the screen it is going to before it can composite towards it: render
     // the destination into the framebuffer and keep a copy.
@@ -574,7 +574,7 @@ bool Compositor::update(uint32_t now)
             break;
     }
 
-    display::update_async();
+    display::update();
     return false;
 }
 

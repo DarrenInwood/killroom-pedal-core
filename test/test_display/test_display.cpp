@@ -408,17 +408,6 @@ void test_draw_framebuffer_copies(void) {
     TEST_ASSERT_EQUAL_UINT8(src[7][127], s_fb[7][127]);
 }
 
-// The SPI flush is blocking, so the frame-pacing API is degenerate: the display
-// is never "busy", update_async() always accepts a frame (doing a full flush),
-// and pump() is a safe no-op. display_manager relies on exactly this contract.
-void test_flush_api_is_non_blocking_noop(void) {
-    TEST_ASSERT_FALSE(display::update_busy());
-    TEST_ASSERT_TRUE(display::update_async());
-    TEST_ASSERT_FALSE(display::update_busy());      // flush completed synchronously
-    display::pump();                                // no-op, safe any time
-    TEST_ASSERT_FALSE(display::update_busy());
-    TEST_ASSERT_TRUE(display::update_async());      // always ready for the next frame
-}
 
 // fill_rect sets every pixel in [x,x+w) x [y,y+h); `on=false` clears them again.
 void test_fill_rect_fills_region(void) {
@@ -517,7 +506,6 @@ int main(int, char**) {
     RUN_TEST(test_compose_hslide_band_over_the_whole_screen_is_the_full_slide);
     RUN_TEST(test_compose_hslide_band_clamps_and_ignores_an_empty_band);
     RUN_TEST(test_draw_framebuffer_copies);
-    RUN_TEST(test_flush_api_is_non_blocking_noop);
     RUN_TEST(test_fill_rect_fills_region);
     RUN_TEST(test_fill_rect_clips_to_bounds);
     RUN_TEST(test_draw_gauge_full_fills_interior);

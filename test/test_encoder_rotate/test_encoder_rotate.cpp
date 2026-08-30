@@ -1,6 +1,6 @@
 // Host-native unit tests for the encoder rotate-dispatch precedence
 // (pedal_core/encoder_rotate.hpp). The decision is a pure, dependency-free helper so it
-// is tested directly, without the encoder_ui collaborator graph (display_manager,
+// is tested directly, without the encoder_ui collaborator graph (the compositor,
 // tempo_led, midi_handler, a fake Effect, …).
 //
 // Pins the precedence and, in particular, the bug this seam exists to close: the
