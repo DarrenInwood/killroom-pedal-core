@@ -1,4 +1,10 @@
 #pragma once
+#include "pedal_core_features.hpp"
+
+#if !PEDAL_CORE_HAS_TEMPO
+#  error "tap_tempo.hpp needs PEDAL_CORE_HAS_TEMPO. Set it in pedal_core_features.hpp and supply pedal_core_tempo_config.hpp."
+#endif
+
 #include <cstdint>
 
 // Tap tempo and MIDI clock synchronisation.

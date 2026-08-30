@@ -1,4 +1,11 @@
-#if __has_include("pedal_core_extinput_config.hpp")
+#include "pedal_core_features.hpp"
+// An undefined switch is a preprocessor zero, which would compile this file to nothing
+// and lose its symbols somewhere the linker reports as an unrelated failure. Say so here
+// instead: the product names every domain, including the ones it does not want.
+#if !defined(PEDAL_CORE_HAS_EXTINPUT)
+#  error "pedal_core_features.hpp must define PEDAL_CORE_HAS_EXTINPUT (0 or 1)."
+#endif
+#if PEDAL_CORE_HAS_EXTINPUT
 
 #include <pedal_core/external_input.hpp>
 #include <pedal_core/hal.hpp>
@@ -174,4 +181,4 @@ external_input::Event external_input::get_event()
     return e;
 }
 
-#endif  // __has_include(pedal_core_extinput_config.hpp)
+#endif  // PEDAL_CORE_HAS_EXTINPUT

@@ -1,6 +1,13 @@
-// Compiled only where the product declares a tempo domain; elsewhere this TU
-// is empty and costs nothing.
-#if __has_include("pedal_core_tempo_config.hpp")
+// Compiled only where the product asks for the tempo layer; elsewhere this TU is empty
+// and costs nothing.
+#include "pedal_core_features.hpp"
+// An undefined switch is a preprocessor zero, which would compile this file to nothing
+// and lose its symbols somewhere the linker reports as an unrelated failure. Say so here
+// instead: the product names every domain, including the ones it does not want.
+#if !defined(PEDAL_CORE_HAS_TEMPO)
+#  error "pedal_core_features.hpp must define PEDAL_CORE_HAS_TEMPO (0 or 1)."
+#endif
+#if PEDAL_CORE_HAS_TEMPO
 
 #include <pedal_core/tap_tempo.hpp>
 #include <pedal_core/hal.hpp>
@@ -142,4 +149,4 @@ float tap_tempo::get_period_fractional(uint8_t num, uint8_t denom)
     return get_period_ms() * (float)num / (float)denom;
 }
 
-#endif  // __has_include(pedal_core_tempo_config.hpp)
+#endif  // PEDAL_CORE_HAS_TEMPO

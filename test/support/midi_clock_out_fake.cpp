@@ -9,6 +9,13 @@
 // other suite leaves them undefined and gets the fake.
 //
 // Test-only controls are declared by the tests that need them, the systick fake's pattern.
+//
+// Gated on the tempo layer like the module it stands in for: where a product has not
+// asked for one, tempo_controller.cpp compiles to nothing, nothing is left undefined, and
+// a fake for a generator the build does not contain would only fail on its own header.
+#include "pedal_core_features.hpp"
+#if PEDAL_CORE_HAS_TEMPO
+
 #include <pedal_core/midi_clock_out.hpp>
 
 namespace midi_clock_out {
@@ -50,3 +57,5 @@ uint32_t fake_clock_last_poll_ms() { return s_last_poll_ms; }
 unsigned fake_clock_polls()        { return s_polls; }
 
 }  // namespace midi_clock_out
+
+#endif  // PEDAL_CORE_HAS_TEMPO

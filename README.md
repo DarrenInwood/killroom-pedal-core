@@ -147,6 +147,21 @@ Nothing in `src/` touches a register. Hardware is reached only through
 functions. A product implements those over its own MCU drivers and the library
 compiles unchanged — the consumers run on different STM32 families.
 
+A product also states which optional domains it wants, in a
+`pedal_core_features.hpp` on the same path:
+
+```cpp
+#define PEDAL_CORE_HAS_TEMPO    1
+#define PEDAL_CORE_HAS_EXTINPUT 0
+```
+
+The modules of a domain that is off compile to nothing and its headers refuse to
+be included, naming the switch; a switch left undefined is an error rather than a
+silent zero. A domain switched on obliges its config header too. Both sides are
+built here — `pio test -e native` with every domain on, `pio test -e native_minimal`
+with all of them off — see
+[ADR-0003](docs/adr/0003-a-product-names-the-domains-it-wants.md).
+
 Product-specific constants (parameter scale, EEPROM geometry, display size)
 come from a `pedal_core_config.hpp` the product places on the include path.
 [test/support/pedal_core_config.hpp](test/support/pedal_core_config.hpp) is the

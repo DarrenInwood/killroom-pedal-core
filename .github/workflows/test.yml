@@ -69,3 +69,7 @@ jobs:
         run: pip install platformio
       - name: Run native tests
         run: pio test -e native
+      # The library as a product that wants neither optional domain: the only build that
+      # compiles the absent branch of every #if PEDAL_CORE_HAS_*.
+      - name: Run native tests (minimal feature set)
+        run: pio test -e native_minimal

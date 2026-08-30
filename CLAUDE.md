@@ -39,15 +39,23 @@ board tests need `pcbnew`, and the warning sweep's ARM leg needs an ARM toolchai
 skipped, loudly, where those are absent, and everything else still runs.
 `git push --no-verify` bypasses the lot.
 
-**The config guard is the trap.** Several modules open with
+**A product names the parts of the library it wants.** Every consumer supplies a
+`pedal_core_features.hpp` on the include path, switching each optional domain on or off:
 
 ```cpp
-#if __has_include("pedal_core_tempo_config.hpp")
+#define PEDAL_CORE_HAS_TEMPO    1
+#define PEDAL_CORE_HAS_EXTINPUT 0
 ```
 
-and compile to *nothing* when the product hasn't supplied that header. A module that silently
-produces no symbols looks like a link error somewhere unrelated, so when a symbol goes missing,
-check the guard before the linker flags.
+The modules of a domain that is off compile to nothing; the headers of one refuse to be
+included at all, naming the switch. A switch left undefined is an error rather than a
+preprocessor zero, because a module silently producing no symbols surfaces as a link failure
+somewhere unrelated. [test/support/pedal_core_features.hpp](test/support/pedal_core_features.hpp)
+is the reference, and a domain switched on obliges its config header too.
+
+Both sides are built: `pio test -e native` runs the suites with every domain on, and
+`pio test -e native_minimal` builds the library with all of them off. The pre-push hook runs
+both. See [docs/adr/0003-a-product-names-the-domains-it-wants.md](docs/adr/0003-a-product-names-the-domains-it-wants.md).
 
 ## Writing style for comments & docs
 

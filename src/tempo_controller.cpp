@@ -1,4 +1,11 @@
-#if __has_include("pedal_core_tempo_config.hpp")
+#include "pedal_core_features.hpp"
+// An undefined switch is a preprocessor zero, which would compile this file to nothing
+// and lose its symbols somewhere the linker reports as an unrelated failure. Say so here
+// instead: the product names every domain, including the ones it does not want.
+#if !defined(PEDAL_CORE_HAS_TEMPO)
+#  error "pedal_core_features.hpp must define PEDAL_CORE_HAS_TEMPO (0 or 1)."
+#endif
+#if PEDAL_CORE_HAS_TEMPO
 
 #include <pedal_core/tempo_controller.hpp>
 #include <pedal_core/tap_tempo.hpp>
@@ -185,4 +192,4 @@ void TempoController::tick(uint32_t now_ms, bool idle_on)
     midi_clock_out::poll(now_ms);
 }
 
-#endif  // __has_include(pedal_core_tempo_config.hpp)
+#endif  // PEDAL_CORE_HAS_TEMPO
