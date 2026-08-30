@@ -120,16 +120,23 @@ void test_device_info_carries_a_slot_count_past_128(void) {
     TEST_ASSERT_EQUAL_UINT16(487u, read_u14(&buf[8]));
 }
 
+// Every bit, not most of them: the ones most likely to collide are the ones appended last,
+// and those were the five this list used to stop short of.
 void test_device_info_capability_bits_are_distinct(void) {
     const uint16_t bits[] = { cap::EXPRESSION, cap::TEMPO, cap::NOISE_GLOBAL,
                               cap::EXT_INPUT, cap::BYPASS_FLAG, cap::CALIBRATION,
-                              cap::FACTORY_BANK, cap::UID, cap::SAVE_ADDRESSED };
+                              cap::FACTORY_BANK, cap::UID, cap::SAVE_ADDRESSED,
+                              cap::BOOST, cap::MIDI_ROUTING, cap::PRESET_EXTRAS,
+                              cap::SCENE_LATCH, cap::TEMPO_DIVISION };
     uint16_t seen = 0u;
     for (const uint16_t b : bits) {
         TEST_ASSERT_EQUAL_UINT16(0u, (uint16_t)(seen & b));   // no bit reused
         TEST_ASSERT_TRUE(b <= 0x3FFFu);                       // fits the lo7/hi7 pair
         seen = (uint16_t)(seen | b);
     }
+    // Fourteen bits, and the field is full: a fifteenth needs DEVICE_INFO's field widened,
+    // which is a wire change rather than a constant.
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0x3FFFu, seen, "the capability field is not full");
 }
 
 void test_device_info_refuses_a_short_buffer(void) {
@@ -556,6 +563,39 @@ void test_global_routing_block_round_trips_every_field(void) {
     TEST_ASSERT_EQUAL_UINT8(midi_routing::tx_state::PC_BYPASS, got.routing.tx);
 }
 
+// The routing record, byte by byte where it sits in the frame.
+//
+// Every other test of this block round-trips it, which proves the encoder and the decoder
+// agree with each other and nothing about what either agrees with. Swap two entries in
+// midi_routing's offset list and a round-trip stays green while every shipped host editor
+// misparses. These are the positions the wire contract fixes, so they are written out
+// rather than derived.
+void test_the_routing_record_sits_where_the_wire_says(void) {
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    const uint16_t n = build_global(sample_global(), 0x01u, buf, sizeof(buf));
+
+    // Find the record rather than assuming where the preceding ones ended: this test is
+    // about the payload's own layout, not about the order the encoder writes records in.
+    uint16_t i = 4u;                     // past F0 <mfr> <dev> <cmd>
+    while (i + 1u < n && buf[i] != global_tag::MIDI_ROUTING) i = (uint16_t)(i + 2u + buf[i + 1u]);
+    TEST_ASSERT_TRUE_MESSAGE(i + 1u < n, "the routing record is not in the frame");
+    TEST_ASSERT_EQUAL_UINT8(midi_routing::LEN, buf[i + 1u]);
+
+    const uint8_t* p = &buf[i + 2u];
+    TEST_ASSERT_EQUAL_UINT8(5u,  p[midi_routing::RX_CHANNEL]);
+    TEST_ASSERT_EQUAL_UINT8(1u,  p[midi_routing::OMNI]);
+    TEST_ASSERT_EQUAL_UINT8(11u, p[midi_routing::TX_CHANNEL]);
+    TEST_ASSERT_EQUAL_UINT8(midi_routing::out_mode::THRU, p[midi_routing::OUT_MODE]);
+    TEST_ASSERT_EQUAL_UINT8(1u,  p[midi_routing::PC_OFFSET]);
+    TEST_ASSERT_EQUAL_UINT8(1u,  p[midi_routing::CLOCK_OUT]);
+    TEST_ASSERT_EQUAL_UINT8(0u,  p[midi_routing::CLOCK_THRU]);
+    TEST_ASSERT_EQUAL_UINT8(midi_routing::usb_jack::BOTH, p[midi_routing::USB_JACK]);
+    TEST_ASSERT_EQUAL_UINT8(0u,  p[midi_routing::RX_PC]);
+    TEST_ASSERT_EQUAL_UINT8(0u,  p[midi_routing::RX_SYSEX]);
+    TEST_ASSERT_EQUAL_UINT8(0u,  p[midi_routing::TX_PARAMS]);
+    TEST_ASSERT_EQUAL_UINT8(midi_routing::tx_state::PC_BYPASS, p[midi_routing::TX_STATE]);
+}
+
 // The follow-the-receive-channel sentinel is 0x7F on the wire, because 0xFF is not a
 // legal SysEx data byte. It has to survive as itself rather than as channel 127.
 void test_global_carries_the_follow_sentinel(void) {
@@ -678,6 +718,67 @@ void test_global_refuses_a_short_buffer(void) {
 void test_global_frame_max_holds_every_record(void) {
     uint8_t buf[GLOBAL_FRAME_MAX] = {};
     TEST_ASSERT_TRUE(build_global(sample_global(), 0x01u, buf, sizeof(buf)) > 0);
+
+    // And the bound is summed from the table rather than restated, so a record added there
+    // is budgeted for. Every row costs its tag, its length byte and its longest payload.
+    uint16_t expect = 5u;
+    for (const GlobalRecord& r : GLOBAL_RECORDS) expect = (uint16_t)(expect + 2u + r.max_len);
+    TEST_ASSERT_EQUAL_UINT16(expect, GLOBAL_FRAME_MAX);
+}
+
+// The table covers the tag vocabulary, which is what stops a tag being named and then
+// forgotten by the encoder, the decoder and the bound at once -- KNOB_MODE's first commits
+// being exactly that.
+void test_every_global_tag_has_a_record(void) {
+    TEST_ASSERT_EQUAL_UINT8(global_tag::CHANNEL, GLOBAL_RECORDS[0].tag);
+    TEST_ASSERT_EQUAL_UINT8(global_tag::LAST, GLOBAL_RECORDS[GLOBAL_RECORD_COUNT - 1u].tag);
+    for (uint16_t i = 1u; i < GLOBAL_RECORD_COUNT; ++i)
+        TEST_ASSERT_EQUAL_UINT8((uint8_t)(GLOBAL_RECORDS[i - 1u].tag + 1u), GLOBAL_RECORDS[i].tag);
+
+    // Every row is reachable through the length bound the decoder consults.
+    for (const GlobalRecord& r : GLOBAL_RECORDS)
+        TEST_ASSERT_EQUAL_UINT8(r.min_len, global_min_len(r.tag));
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0u, global_min_len(0x7Fu),
+                                    "an unknown tag was given a length bound");
+}
+
+// The knob mode a host can name is one the firmware can send and read back.
+void test_global_carries_the_knob_mode(void) {
+    GlobalView g{};
+    g.has_knob_mode = true;
+    g.knob_mode     = 1u;                       // jump
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    const uint16_t n = build_global(g, 0x01u, buf, sizeof(buf));
+    TEST_ASSERT_TRUE(all_data_bytes_7bit(buf, n));
+
+    GlobalView got{};
+    TEST_ASSERT_TRUE(parse_global(buf, n, 0x01u, got));
+    TEST_ASSERT_TRUE_MESSAGE(got.has_knob_mode, "the knob mode was written but not read back");
+    TEST_ASSERT_EQUAL_UINT8(1u, got.knob_mode);
+}
+
+// A product that has no knob mode to report does not send the record, and a host reading
+// the frame is told nothing rather than told pickup.
+void test_a_product_without_a_knob_mode_sends_no_record(void) {
+    GlobalView g{};
+    g.has_channel = true;
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    const uint16_t n = build_global(g, 0x01u, buf, sizeof(buf));
+
+    GlobalView got{};
+    TEST_ASSERT_TRUE(parse_global(buf, n, 0x01u, got));
+    TEST_ASSERT_FALSE(got.has_knob_mode);
+}
+
+// An empty record names a field it cannot fill, and is left absent rather than read as a
+// zero the pedal never sent. The bound is the table's, so this holds for every record.
+void test_an_empty_knob_mode_record_is_left_absent(void) {
+    const uint8_t frame[] = { 0xF0u, MANUFACTURER_ID, 0x01u, cmd::GLOBAL_DATA,
+                              global_tag::KNOB_MODE, 0u,      // a record with no payload
+                              0xF7u };
+    GlobalView got{};
+    TEST_ASSERT_TRUE(parse_global(frame, (uint16_t)sizeof(frame), 0x01u, got));
+    TEST_ASSERT_FALSE_MESSAGE(got.has_knob_mode, "an empty record was half-believed");
 }
 
 int main(int, char**)
@@ -728,5 +829,10 @@ int main(int, char**)
     RUN_TEST(test_global_rejects_an_unrelated_command);
     RUN_TEST(test_global_refuses_a_short_buffer);
     RUN_TEST(test_global_frame_max_holds_every_record);
+    RUN_TEST(test_every_global_tag_has_a_record);
+    RUN_TEST(test_the_routing_record_sits_where_the_wire_says);
+    RUN_TEST(test_global_carries_the_knob_mode);
+    RUN_TEST(test_a_product_without_a_knob_mode_sends_no_record);
+    RUN_TEST(test_an_empty_knob_mode_record_is_left_absent);
     return UNITY_END();
 }

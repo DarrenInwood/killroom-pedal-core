@@ -178,7 +178,19 @@ inline constexpr uint8_t SCENE_ACTIVE = 0x15u;
 // How the knobs behave when a parameter has moved out from under them: 0 pickup — the
 // knob stays inert until its pot reaches the value — 1 jump, the knob is always live.
 // A host that predates this tag skips it by its length and reads the rest of the frame.
+//
+// No capability bit announces it, and none can: cap:: is full at fourteen, and a fifteenth
+// needs DEVICE_INFO's field widened, which is a wire change rather than a constant. Nor
+// does it need one -- a bit exists for what a global read cannot show, and this record
+// either is in the frame or is not, which is the whole point of the layout being
+// length-prefixed. A product with no knobs sends no record and a host reads no knob mode.
 inline constexpr uint8_t KNOB_MODE    = 0x16u;
+
+// The newest tag in this namespace, and the reason a new one cannot be half-added.
+// GLOBAL_RECORDS below must reach it: a tag named here with no row there is a tag the
+// firmware can spell but cannot send, and a host reading the frame skips it by its length
+// and never learns it was meant to exist. Move this line with the tag above it.
+inline constexpr uint8_t LAST = KNOB_MODE;
 }  // namespace global_tag
 
 // --- the MIDI routing block -------------------------------------------------
@@ -626,6 +638,63 @@ struct ExtInputSettings {
     bool    has_holds = false;
 };
 
+// --- the global block's records ---------------------------------------------
+//
+// Every record the frame carries, stated once: its tag, the shortest payload worth
+// believing, and the longest it is ever written with. The size bound and the decoder's
+// length check are both answered from here, so the three cannot drift apart by hand.
+//
+// The encoder and the decoder keep their own branches deliberately. Each record packs a
+// different shape -- a bool, a three-byte triple, a block with an optional tail -- and a
+// table that could express all of them would need offsets into GlobalView, which is not a
+// standard-layout type and is compiled in every product under -Wall -Wextra. What the
+// table is for is making an omission a compile error, not making the codec generic.
+struct GlobalRecord {
+    uint8_t tag;
+    uint8_t min_len;   // a record shorter than this names a field it cannot fill
+    uint8_t max_len;   // what the frame bound budgets for
+};
+
+inline constexpr GlobalRecord GLOBAL_RECORDS[] = {
+    { global_tag::CHANNEL,      1u,                 1u                 },
+    { global_tag::NOISE,        3u,                 3u                 },
+    { global_tag::EXT_INPUT,    4u,                 7u                 },  // the holds are the tail
+    { global_tag::BYPASS,       1u,                 1u                 },
+    { global_tag::MIDI_ROUTING, midi_routing::LEN,  midi_routing::LEN  },
+    { global_tag::SCENE_ACTIVE, 1u,                 1u                 },
+    { global_tag::KNOB_MODE,    1u,                 1u                 },
+};
+
+inline constexpr uint16_t GLOBAL_RECORD_COUNT =
+    (uint16_t)(sizeof(GLOBAL_RECORDS) / sizeof(GLOBAL_RECORDS[0]));
+
+// The tags are one run allocated from CHANNEL upward. Holding the table to that run, and
+// to both ends of it, is what makes "every tag has a row" checkable without reflection:
+// a tag added to the namespace moves global_tag::LAST, and the last assertion then fails
+// until the row exists.
+inline constexpr bool global_records_run_unbroken()
+{
+    for (uint16_t i = 1u; i < GLOBAL_RECORD_COUNT; ++i)
+        if (GLOBAL_RECORDS[i].tag != (uint8_t)(GLOBAL_RECORDS[i - 1u].tag + 1u)) return false;
+    return true;
+}
+static_assert(GLOBAL_RECORDS[0].tag == global_tag::CHANNEL,
+              "GLOBAL_RECORDS starts at the first global tag");
+static_assert(global_records_run_unbroken(),
+              "the global tags are one unbroken run; GLOBAL_RECORDS must be in that order");
+static_assert(GLOBAL_RECORDS[GLOBAL_RECORD_COUNT - 1u].tag == global_tag::LAST,
+              "a tag was added to global_tag:: without a row in GLOBAL_RECORDS");
+
+// The shortest payload this tag is worth reading. Zero for a tag this firmware does not
+// know, which is exactly the length check an unknown record should get: none, because it
+// is skipped by its length either way.
+inline constexpr uint8_t global_min_len(uint8_t tag)
+{
+    for (const GlobalRecord& r : GLOBAL_RECORDS)
+        if (r.tag == tag) return r.min_len;
+    return 0u;
+}
+
 struct GlobalView {
     uint8_t                    channel       = 0u;     // 0-15, or MIDI_CHANNEL_OMNI
     NoiseSettings              noise{};
@@ -633,6 +702,7 @@ struct GlobalView {
     bool                       bypass_active = true;
     midi_routing::RoutingBlock routing{};
     uint8_t                    scene_active  = 0u;     // 0 Scene A, 1 Scene B
+    uint8_t                    knob_mode     = 0u;     // 0 pickup, 1 jump
 
     bool has_channel      = false;
     bool has_noise        = false;
@@ -640,19 +710,20 @@ struct GlobalView {
     bool has_bypass       = false;
     bool has_routing      = false;
     bool has_scene_active = false;
+    bool has_knob_mode    = false;
 };
 
 // The largest global frame a product can produce, so it can size its buffer once from a
-// constant rather than guessing. Every record at its longest, which is the ext-input
-// tail's seven bytes and nothing else optional.
-inline constexpr uint16_t GLOBAL_FRAME_MAX =
-    (uint16_t)(5u                                  // F0 mfr dev cmd ... F7
-               + (2u + 1u)                         // CHANNEL
-               + (2u + 3u)                         // NOISE
-               + (2u + 7u)                         // EXT_INPUT with holds
-               + (2u + 1u)                         // BYPASS
-               + (2u + (uint16_t)midi_routing::LEN)// MIDI_ROUTING
-               + (2u + 1u));                       // SCENE_ACTIVE
+// constant rather than guessing. Every record at its longest, plus the tag and length byte
+// each costs -- summed from the table, so a record added there is budgeted for without
+// anyone remembering to add a term here.
+inline constexpr uint16_t global_frame_max()
+{
+    uint16_t n = 5u;   // F0 mfr dev cmd ... F7
+    for (const GlobalRecord& r : GLOBAL_RECORDS) n = (uint16_t)(n + 2u + r.max_len);
+    return n;
+}
+inline constexpr uint16_t GLOBAL_FRAME_MAX = global_frame_max();
 
 // Returns the frame length, or 0 if the buffer was too small. A record whose field was
 // not present is not written: what a product does not have, it does not send.
@@ -689,6 +760,10 @@ inline uint16_t build_global(const GlobalView& g, uint8_t device, uint8_t* out, 
         const uint8_t v = g.scene_active;
         w.tlv(global_tag::SCENE_ACTIVE, &v, 1u);
     }
+    if (g.has_knob_mode) {
+        const uint8_t v = g.knob_mode;
+        w.tlv(global_tag::KNOB_MODE, &v, 1u);
+    }
 
     w.end();
     return w.length();
@@ -710,21 +785,24 @@ inline bool parse_global(const uint8_t* f, uint16_t len, uint8_t device, GlobalV
     TlvReader r(&f[4], (uint16_t)(len - 5u));
     Tlv t{};
     while (r.next(t)) {
+        // A record shorter than the field it names is left absent rather than half-believed:
+        // a frame from an editor is as untrusted as one off a corrupt page. The bound comes
+        // from the table the encoder is budgeted from, so the two cannot disagree about how
+        // long a record has to be. An unknown tag has no bound and is skipped below.
+        if (t.len < global_min_len(t.tag)) continue;
+
         switch (t.tag) {
             case global_tag::CHANNEL:
-                if (t.len < 1u) break;
                 out.channel     = t.value[0];
                 out.has_channel = true;
                 break;
             case global_tag::NOISE:
-                if (t.len < 3u) break;
                 out.noise.enabled   = (t.value[0] != 0u);
                 out.noise.threshold = t.value[1];
                 out.noise.depth     = t.value[2];
                 out.has_noise       = true;
                 break;
             case global_tag::EXT_INPUT:
-                if (t.len < 4u) break;
                 out.ext_input.mode     = t.value[0];
                 out.ext_input.press[0] = t.value[1];
                 out.ext_input.press[1] = t.value[2];
@@ -738,19 +816,20 @@ inline bool parse_global(const uint8_t* f, uint16_t len, uint8_t device, GlobalV
                 out.has_ext_input = true;
                 break;
             case global_tag::BYPASS:
-                if (t.len < 1u) break;
                 out.bypass_active = (t.value[0] != 0u);
                 out.has_bypass    = true;
                 break;
             case global_tag::MIDI_ROUTING:
-                if (t.len < midi_routing::LEN) break;
                 midi_routing::read_block(t.value, out.routing);
                 out.has_routing = true;
                 break;
             case global_tag::SCENE_ACTIVE:
-                if (t.len < 1u) break;
                 out.scene_active     = t.value[0];
                 out.has_scene_active = true;
+                break;
+            case global_tag::KNOB_MODE:
+                out.knob_mode     = t.value[0];
+                out.has_knob_mode = true;
                 break;
             default:
                 break;   // a tag this firmware does not know, skipped by length
