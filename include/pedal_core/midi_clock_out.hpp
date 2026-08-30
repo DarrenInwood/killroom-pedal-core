@@ -16,10 +16,12 @@
 // Falling a whole interval behind resynchronises instead, losing a tick rather
 // than sending two together.
 //
-// It runs from the caller's loop, not from a timer interrupt: the jack writer is
-// a single-producer ring that spins when full, so a high-priority interrupt
-// writing to it would both race the loop and deadlock against the transmit
-// interrupt that drains it. The cost is that tick spacing carries whatever
+// It runs from the caller's loop, not from a timer interrupt: the jack has one
+// producer, and that producer asks uart::tx_room() for a whole message before it
+// begins one, because a message begun without room for all of it reaches the wire
+// truncated. An interrupt writing to the jack would be a second producer racing that
+// ring -- taking room already spoken for, mid-message, and truncating the very
+// message the check was protecting. The cost is that tick spacing carries whatever
 // jitter the caller's loop has; the tempo itself does not drift.
 //
 // Only the clock byte is generated. Start and Stop belong to a sequencer's

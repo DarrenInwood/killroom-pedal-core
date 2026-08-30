@@ -269,10 +269,13 @@ private:
     // the controller sent it.
     //
     // Holding it is not an optimisation. Both jacks run at 31250 baud, so a forwarded
-    // stream longer than the one arriving cannot be sustained at all -- the transmit ring
-    // fills, uart::write spins, the loop stops draining the receive ring, and messages are
-    // lost. Re-emitting a status byte per message costs 50% on a saturated NRPN stream,
-    // which is 50% more than the wire has.
+    // stream longer than the one arriving cannot be sustained at all, and re-emitting a
+    // status byte per message costs 50% on a saturated NRPN stream -- 50% more than the
+    // wire has. There is nowhere to borrow that from: what the jack cannot carry is lost
+    // a whole message at a time -- a short one by the transmit queue's rules, which are
+    // MidiOutQueue's to state, and a frame dropped entire by queue_push() rather than
+    // truncated. The status bytes not sent are the margin that keeps messages out of that
+    // reckoning.
     //
     // System Common and SysEx break the run (the spec says so); System Real-Time does not,
     // which is why realtime() writes straight past this.
