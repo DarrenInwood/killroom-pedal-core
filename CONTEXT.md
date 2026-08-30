@@ -48,6 +48,13 @@ panel a knob edit unrolls, a message banner, the save animation. Distinct from a
 stays until something changes it.
 _Avoid_: overlay (the drawing is an overlay; the thing is a transient), popup, toast
 
+**The slide**:
+The transition between two screens: the frame being left and the frame arriving, composited
+column by column until the arriving one has crossed. A **band** slide composites only a range
+of pixel rows and leaves the rest of the screen to the ordinary redraw, so a change confined to
+one region of the layout reads as that region moving rather than the whole display.
+_Avoid_: wipe, scroll, animation (nothing scrolls; two captured frames are composited)
+
 **The host display seam**:
 The stubbed hardware a host program compiles the real display stack behind — no SPI, no pins,
 and a clock it can advance. What lets the firmware's own framebuffer be photographed or asserted

@@ -543,13 +543,9 @@ void Compositor::update(uint32_t now)
             return;
 
         case FramePacer::What::SlideStep:
-            display::compose_hslide(m_slide_from, m_slide_to,
-                                    (uint8_t)(d.arg * OLED_WIDTH / FramePacer::SLIDE_MS),
-                                    m_slide_dir);
-            break;
-
-        case FramePacer::What::SlideSettle:
-            display::draw_framebuffer(m_slide_to);   // settle on the destination
+            display::compose_hslide_band(m_slide_from, m_slide_to,
+                                         (uint8_t)(d.arg * OLED_WIDTH / m_pacer.slide_ms()),
+                                         m_slide_dir, m_slide_y0, m_slide_y1);
             break;
 
         // The save confirmation owns the whole screen; the focus panel and the banner are
@@ -559,6 +555,15 @@ void Compositor::update(uint32_t now)
             m_icon_now = now;
             draw_save();
             break;
+
+        // The transition is over, and the frame it leaves owed is drawn by the ordinary
+        // path on the next pass. Nothing is painted here: replaying the destination
+        // captured when the transition began would paint state that moved while it ran —
+        // a second slide is refused while one runs, so a fast spin through screens moves
+        // the state without animating — and painting it live here would only draw the
+        // very frame the pacer has already marked the screen dirty for.
+        case FramePacer::What::SlideSettle:
+            return;
 
         case FramePacer::What::Frame:
         case FramePacer::What::FramePanel:
@@ -719,15 +724,26 @@ void Compositor::begin_slide(int8_t dir)
 {
     // A splash or another slide in flight keeps the screen; otherwise capture the current
     // frame as the "from" and let the next update() render and slide in the "to".
-    const FramePacer::SlideStart start = m_pacer.slide();
+    arm_slide(m_pacer.slide(), dir, 0u, (uint8_t)(OLED_HEIGHT - 1u));
+}
+
+void Compositor::begin_slide_band(int8_t dir, uint8_t y0, uint8_t y1, uint32_t duration_ms)
+{
+    arm_slide(m_pacer.slide(duration_ms), dir, y0, y1);
+}
+
+void Compositor::arm_slide(FramePacer::SlideStart start, int8_t dir, uint8_t y0, uint8_t y1)
+{
     if (start == FramePacer::SlideStart::Refused) return;
     // A transient overlay (the param focus panel / a banner) has been closed, so re-render
     // the underlying screen for the slide to capture. The state behind it is still current
-    // here — begin_slide runs before the algorithm/preset/page actually changes — so this
+    // here — a slide begins before the algorithm/preset/page actually changes — so this
     // captures the correct "from" frame and the player sees a clean slide to the new screen.
     if (start == FramePacer::SlideStart::RedrawFirst) draw_normal();
     display::capture(m_slide_from);
     m_slide_dir = dir;
+    m_slide_y0  = y0;
+    m_slide_y1  = y1;
 }
 
 void Compositor::show_splash()

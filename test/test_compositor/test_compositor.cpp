@@ -426,11 +426,102 @@ void test_a_slide_settles_on_its_destination(void) {
     TEST_ASSERT_FALSE_MESSAGE(frames_match(mid, destination), "the slide skipped to the end");
 
     for (uint32_t t = 1076u; t < 1210u; t += 16u) { at(t); c.update(t); }
-    at(1210); c.update(1210);                             // past SLIDE_MS: settle
+    at(1210); c.update(1210);                             // past SLIDE_MS: the slide ends
+    at(1211); c.update(1211);                             // the frame it leaves owed
 
     Frame settled; display::capture(settled);
     TEST_ASSERT_TRUE_MESSAGE(frames_match(settled, destination),
                              "the slide did not settle on the destination frame");
+}
+
+// A band slide composites only the pixel rows it was given: the rest of the screen is the
+// destination, drawn live before the first step. The band here is the parameter grid a
+// product asks for — pedal-core is told the rows, it does not know what is in them.
+static constexpr uint8_t BAND_Y0 = 27u, BAND_Y1 = 56u;
+
+// Do two frames agree over the pixel rows y0..y1?
+static bool rows_match(const Frame a, const Frame b, uint8_t y0, uint8_t y1)
+{
+    for (uint8_t y = y0; y <= y1; ++y)
+        for (uint8_t x = 0; x < OLED_WIDTH; ++x)
+            if (px(a, x, y) != px(b, x, y)) return false;
+    return true;
+}
+
+void test_a_band_slide_moves_only_its_own_rows(void) {
+    Frame destination;
+    { TestCompositor ref; boot(ref, 1000);
+      ref.set_preset_name("Second"); ref.set_context_name("Flanger");
+      ref.set_param(0, "Rate", "Square", 40u);
+      at(1010); ref.update(1010); display::capture(destination); }
+
+    TestCompositor c;
+    boot(c, 1000);
+    c.set_preset_name("First"); c.set_context_name("Chorus");
+    c.set_param(0, "Depth", "Sine", 90u);
+    at(1010); c.update(1010);
+    Frame leaving; display::capture(leaving);
+
+    // A short slide of the grid rows only, at a speed of its own.
+    c.begin_slide_band(1, BAND_Y0, BAND_Y1, 60u);
+    c.set_preset_name("Second"); c.set_context_name("Flanger");
+    c.set_param(0, "Rate", "Square", 40u);
+
+    at(1060); c.update(1060);       // the destination drawn whole, then the first band step
+    Frame first_step; display::capture(first_step);
+
+    TEST_ASSERT_TRUE_MESSAGE(rows_match(first_step, destination, 0u, (uint8_t)(BAND_Y0 - 1u))
+                          && rows_match(first_step, destination, (uint8_t)(BAND_Y1 + 1u),
+                                        (uint8_t)(OLED_HEIGHT - 1u)),
+                             "the rows outside the band are not the destination screen");
+    TEST_ASSERT_TRUE_MESSAGE(rows_match(first_step, leaving, BAND_Y0, BAND_Y1),
+                             "the band did not start on the screen it is leaving");
+
+    // And it settles on its own duration rather than on SLIDE_MS.
+    for (uint32_t t = 1076u; t < 1120u; t += 16u) { at(t); c.update(t); }
+    at(1120); c.update(1120);       // 60 ms in, where SLIDE_MS would still be stepping
+    at(1121); c.update(1121);       // and the frame the end of a slide leaves owed
+    Frame settled; display::capture(settled);
+    TEST_ASSERT_TRUE_MESSAGE(frames_match(settled, destination),
+                             "the band slide did not settle on the destination frame");
+}
+
+// What follows a transition is the state as it stands, and the frame captured when the
+// transition began is never replayed. A second slide is refused while one runs, so a fast
+// spin through screens moves the state without animating, and what the transition is
+// carrying is already out of date by the time it lands.
+void test_a_settled_slide_shows_the_state_as_it_stands(void) {
+    Frame current, captured;
+    { TestCompositor ref; boot(ref, 1000);
+      ref.set_preset_name("Third"); ref.set_context_name("Phaser");
+      at(1010); ref.update(1010); display::capture(current); }
+    { TestCompositor ref; boot(ref, 1000);
+      ref.set_preset_name("Second"); ref.set_context_name("Flanger");
+      at(1010); ref.update(1010); display::capture(captured); }
+
+    TestCompositor c;
+    boot(c, 1000);
+    c.set_preset_name("First"); c.set_context_name("Chorus");
+    at(1010); c.update(1010);
+
+    c.begin_slide(1);
+    c.set_preset_name("Second"); c.set_context_name("Flanger");
+    at(1060); c.update(1060);                             // the destination is captured here
+
+    c.begin_slide(1);                                     // refused: one is already running
+    c.set_preset_name("Third"); c.set_context_name("Phaser");
+
+    for (uint32_t t = 1076u; t < 1210u; t += 16u) { at(t); c.update(t); }
+    at(1210); c.update(1210);                             // past SLIDE_MS: the slide ends
+
+    Frame ending; display::capture(ending);
+    TEST_ASSERT_FALSE_MESSAGE(frames_match(ending, captured),
+                              "the settle replayed the frame captured when the slide began");
+
+    at(1211); c.update(1211);                             // the frame it leaves owed
+    Frame settled; display::capture(settled);
+    TEST_ASSERT_TRUE_MESSAGE(frames_match(settled, current),
+                             "what followed the slide was not the state as it stands");
 }
 
 // A splash owns the screen, so a transition under it is refused rather than queued behind.
@@ -668,6 +759,8 @@ int main(int, char**) {
     RUN_TEST(test_a_faulted_boot_runs_the_fault_then_the_splash);
     RUN_TEST(test_the_save_confirmation_owns_the_screen);
     RUN_TEST(test_a_slide_settles_on_its_destination);
+    RUN_TEST(test_a_band_slide_moves_only_its_own_rows);
+    RUN_TEST(test_a_settled_slide_shows_the_state_as_it_stands);
     RUN_TEST(test_a_slide_under_a_splash_is_refused);
     RUN_TEST(test_apply_carries_every_field);
     RUN_TEST(test_apply_paints_the_same_frame_as_the_setters);
