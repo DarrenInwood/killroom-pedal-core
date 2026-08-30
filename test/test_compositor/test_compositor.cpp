@@ -46,34 +46,13 @@ public:
     // that product, so the editor's pixels are reachable from here at all.
     static constexpr uint8_t SCREEN_NAME_EDIT = 9u;
 
-    // The state the base is holding, read back through the same protected members a
-    // product hook reads. A field apply() dropped would otherwise be invisible where it
-    // draws nothing on the screen under test — the name cursor, for one.
-    ScreenState held() const
-    {
-        ScreenState s;
-        s.screen = m_screen;
-        s.focus  = m_focus;
-        s.preset = m_preset;
-        std::strncpy(s.preset_name,  m_preset_name,  sizeof(s.preset_name)  - 1);
-        std::strncpy(s.context_name, m_context_name, sizeof(s.context_name) - 1);
-        for (uint8_t i = 0; i < MAX_COLS; ++i) {
-            std::strncpy(s.param_name[i], m_param_name[i], sizeof(s.param_name[i]) - 1);
-            std::strncpy(s.param_val[i],  m_param_val[i],  sizeof(s.param_val[i])  - 1);
-            s.param_bar[i]    = m_param_bar[i];
-            s.param_pickup[i] = m_param_pickup[i];
-        }
-        s.page      = m_page;
-        s.num_pages = m_num_pages;
-        std::strncpy(s.function, m_function, sizeof(s.function) - 1);
-        for (uint8_t i = 0; i < 2u; ++i)
-            std::strncpy(s.switch_label[i], m_switch_label[i], sizeof(s.switch_label[i]) - 1);
-        s.name_cursor   = m_name_cursor;
-        s.save_prompt   = m_save_prompt;
-        s.status_badge  = m_status_badge;
-        s.scene_badge   = m_scene_badge;
-        return s;
-    }
+    // The state the base is holding, read back through the same accessor a product hook
+    // reads. A field apply() dropped would otherwise be invisible where it draws nothing on
+    // the screen under test — the name cursor, for one.
+    //
+    // This used to copy seventeen fields out of seventeen protected members, which was a
+    // fourth statement of the same list and had to be edited whenever the other three were.
+    const ScreenState& held() const { return state(); }
 
 protected:
     void draw_screen(uint8_t screen_id) override
@@ -579,6 +558,9 @@ static Compositor::ScreenState sample_state(void) {
     return s;
 }
 
+// Field by field rather than a memcmp: ScreenState has padding between its members, and a
+// default-initialised one leaves those bytes indeterminate. The char arrays would compare
+// safely — assign() zero-fills each to the end of its buffer — but the padding would not.
 static bool states_match(const Compositor::ScreenState& a, const Compositor::ScreenState& b) {
     if (a.screen != b.screen || a.focus != b.focus || a.preset != b.preset) return false;
     if (std::strcmp(a.preset_name, b.preset_name) != 0) return false;
@@ -643,8 +625,9 @@ void test_apply_paints_the_same_frame_as_the_setters(void) {
     TEST_ASSERT_TRUE(frames_match(via_apply, via_setters));
 }
 
-// A producer can push the same state every tick and pay for a redraw only when the
-// screen has something new to say.
+// A producer can push the same state every tick without the screen taking it for news, so
+// a change draws on the next tick rather than waiting out the cap. Every tick here is
+// inside that cap, which is what isolates the diffing from the idle floor below.
 void test_applying_an_unchanged_state_costs_no_redraw(void) {
     Compositor::ScreenState st = sample_state();
     st.screen = 7u;                        // a product screen, so every draw is countable
@@ -663,6 +646,27 @@ void test_applying_an_unchanged_state_costs_no_redraw(void) {
     c.apply(st);
     at(1012); c.update(1012);
     TEST_ASSERT_EQUAL_UINT8(2, c.screens_drawn);
+}
+
+// And what the diffing does NOT buy: a still screen redraws anyway once the idle cap has
+// passed. The floor is the pacer's — apply() only decides whether a change is news, and
+// the header says so rather than promising an idle pedal draws nothing.
+void test_a_still_screen_still_redraws_past_the_idle_cap(void) {
+    TestCompositor c;
+    boot(c, 1000);
+    Compositor::ScreenState st = sample_state();
+    st.screen = 7u;                     // a product screen, so every draw is countable
+    c.apply(st);
+    at(1010); c.update(1010);
+    TEST_ASSERT_EQUAL_UINT8(1, c.screens_drawn);
+
+    c.apply(st);                        // the same state again
+    at(1011); c.update(1011);           // inside the 50 ms cap: nothing new to say
+    TEST_ASSERT_EQUAL_UINT8(1, c.screens_drawn);
+
+    at(1080); c.update(1080);           // past it: the floor draws regardless
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, c.screens_drawn,
+                                    "the idle floor stopped drawing");
 }
 
 // The same holds for the setters underneath, which is what stops apply() and the long
@@ -822,6 +826,7 @@ int main(int, char**) {
     RUN_TEST(test_apply_carries_every_field);
     RUN_TEST(test_apply_paints_the_same_frame_as_the_setters);
     RUN_TEST(test_applying_an_unchanged_state_costs_no_redraw);
+    RUN_TEST(test_a_still_screen_still_redraws_past_the_idle_cap);
     RUN_TEST(test_pushing_an_unchanged_value_costs_no_redraw);
     RUN_TEST(test_names_differing_past_the_buffer_are_the_same_screen);
     RUN_TEST(test_a_table_of_screens_each_draws_its_own);

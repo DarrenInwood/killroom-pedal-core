@@ -75,6 +75,8 @@ public:
         uint16_t preset = 0;
         char     preset_name[17]  = "";
         char     context_name[20] = "";
+        // A slot label is a knob's parameter on the grid, a settings row in the tree and a
+        // whole algorithm name in a browser list, so it is sized for the longest of those.
         char     param_name[MAX_COLS][20] = {};
         char     param_val [MAX_COLS][16] = {};
         uint16_t param_bar [MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
@@ -90,8 +92,13 @@ public:
 
     // Say what the screen shows, whole. Each field is compared against what is already
     // held and the frame is marked dirty only where something a pixel depends on actually
-    // moved, so a producer can push the same state every tick and pay for a redraw only
-    // when the screen has something new to say.
+    // moved, so a producer can push the same state every tick without the screen taking it
+    // for news.
+    //
+    // What that buys is latency rather than idle cost: a change draws on the next tick
+    // instead of waiting out the pacer's cap. It does not buy a still screen doing nothing
+    // — past the cap the pacer redraws whether or not anything moved, which is the floor
+    // that keeps an animation smooth. FramePacer::decide() owns both.
     //
     // It runs through the setters below rather than beside them, so there is one place
     // per field that decides what a change is and the two ways in cannot drift.
@@ -126,7 +133,7 @@ public:
     virtual void set_screen(uint8_t screen_id);
     virtual void set_name_cursor(uint8_t cursor);
 
-    uint8_t screen() const { return m_screen; }
+    uint8_t screen() const { return m_state.screen; }
 
     // --- transients ---------------------------------------------------------
     // `pickup` is where the pot is pointing when the panel answers a turn of a knob still
@@ -153,6 +160,13 @@ public:
 
 protected:
     virtual ~Compositor() = default;
+
+    // What the screen currently says, for a hook that draws part of it.
+    //
+    // Read-only on purpose. A hook that wrote a field directly would move a pixel without
+    // the frame being marked dirty, and the redraw would wait for whatever moved next; the
+    // setters are the way in, and mark_dirty() is there for a hook whose own state moved.
+    const ScreenState& state() const { return m_state; }
 
     // --- the product hooks --------------------------------------------------
     // Draw the animated header icon for `now` and return the width it consumed
@@ -245,25 +259,16 @@ protected:
     static constexpr char GLYPH_PM = (char)0x7F;
 
     // --- state the hooks read ------------------------------------------------
+
     LayoutSpec m_layout;
-    uint8_t    m_screen = SCREEN_NORMAL;
-    Focus      m_focus  = Focus::Pages;
-    uint16_t   m_preset = 0;
-    char       m_preset_name[17]  = "";
-    char       m_context_name[20] = "";
-    // A slot label is a knob's parameter on the grid, a settings row in the tree and a whole
-    // algorithm name in a browser list, so it is sized for the longest of those.
-    char       m_param_name[MAX_COLS][20] = {};
-    char       m_param_val [MAX_COLS][16] = {};
-    uint16_t   m_param_bar [MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
-    uint16_t   m_param_pickup[MAX_COLS] = { NO_BAR, NO_BAR, NO_BAR, NO_BAR };
-    uint8_t    m_page = 0, m_num_pages = 1;
-    char       m_function[FUNCTION_LABEL_MAX + 1u] = "";
-    char       m_switch_label[2][FUNCTION_LABEL_MAX + 1u] = {};
-    uint8_t    m_name_cursor = 0;
-    bool       m_save_prompt = false;
-    bool       m_status_badge = false;
-    bool       m_scene_badge  = false;
+
+    // The performance screen, held once.
+    //
+    // The fields are declared in ScreenState and nowhere else, so adding one to the screen
+    // is a line there and a line in the setter that writes it, rather than a line in each
+    // of a struct, a member list and a setter list that nothing holds together. A hook
+    // reads it through state() below.
+    ScreenState m_state{};
 
 private:
     void draw_normal(bool transient_owns_bottom_row = false);

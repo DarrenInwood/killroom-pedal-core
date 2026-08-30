@@ -167,7 +167,7 @@ void Compositor::draw_header(uint32_t now)
     // here. Counting from 1 on screen was friendlier to read and forced everyone
     // addressing the pedal to subtract one, which is the error nobody catches on stage.
     char num[8];
-    snprintf(num, sizeof(num), "%03u", (unsigned)m_preset);
+    snprintf(num, sizeof(num), "%03u", (unsigned)m_state.preset);
     const uint8_t num_w = display::text_width(display::FONT_NAME, num);
     const uint8_t num_x = (uint8_t)(OLED_WIDTH - num_w);
     display::draw_text_right(display::FONT_NAME, OLED_WIDTH,
@@ -179,19 +179,19 @@ void Compositor::draw_header(uint32_t now)
     // footswitch labels'. The name region shrinks to leave it room, and the dot sits
     // inside the header highlight so it photo-negates with the rest of the row.
     constexpr uint8_t DOT = 3u, DOT_GAP = 3u;
-    const uint8_t dot_w = m_save_prompt ? (uint8_t)(DOT + DOT_GAP) : 0u;
-    if (m_save_prompt)
+    const uint8_t dot_w = m_state.save_prompt ? (uint8_t)(DOT + DOT_GAP) : 0u;
+    if (m_state.save_prompt)
         display::fill_rect((uint8_t)(num_x - dot_w), (uint8_t)((RULE_Y - DOT) / 2u),
                            DOT, DOT, true);
 
     // Preset name (or context-name fallback) between the icon and the number,
     // truncated at a char boundary so it ends cleanly.
-    char name_disp[sizeof(m_preset_name)];
-    strncpy(name_disp, m_preset_name, sizeof(name_disp));
+    char name_disp[sizeof(m_state.preset_name)];
+    strncpy(name_disp, m_state.preset_name, sizeof(name_disp));
     name_disp[sizeof(name_disp) - 1u] = '\0';
     uint8_t n = (uint8_t)strlen(name_disp);
     while (n > 0 && name_disp[n - 1] == ' ') name_disp[--n] = '\0';
-    const char* big = (name_disp[0] != '\0') ? name_disp : m_context_name;
+    const char* big = (name_disp[0] != '\0') ? name_disp : m_state.context_name;
 
     // Graduated header fallback: render the name in the largest bold size that fits whole
     // — 12pt, else 10pt, else 8pt — each vertically centred in the header bar. If even 8pt
@@ -212,7 +212,7 @@ void Compositor::draw_header(uint32_t now)
     }
 
     // Selected: photo-negate the header row from 2px past the icon to the right edge.
-    if (m_focus == Focus::Preset)
+    if (m_state.focus == Focus::Preset)
         display::invert_region((uint8_t)(inset + 2u), 0u,
                                (uint8_t)(OLED_WIDTH - (inset + 2u)), RULE_Y);
 }
@@ -232,9 +232,9 @@ void Compositor::draw_context_line()
     // second footswitch does, that wins: the switch is labelled FUNCTION on the panel
     // precisely because its job changes with the algorithm, so the screen is the only place
     // that can say which job it has right now. Otherwise the page indicator has the space.
-    const bool    fn      = m_function[0] != '\0';
-    const uint8_t fn_w    = fn ? (uint8_t)(display::text_width(display::FONT_SMALL, m_function) + 2u) : 0u;
-    const bool    multi   = !fn && m_num_pages > 1u;
+    const bool    fn      = m_state.function[0] != '\0';
+    const uint8_t fn_w    = fn ? (uint8_t)(display::text_width(display::FONT_SMALL, m_state.function) + 2u) : 0u;
+    const bool    multi   = !fn && m_state.num_pages > 1u;
     const uint8_t split_x = fn    ? (uint8_t)(OLED_WIDTH - fn_w)
                           : multi ? (uint8_t)(OLED_WIDTH - page_widget_width())
                                   : OLED_WIDTH;
@@ -248,26 +248,26 @@ void Compositor::draw_context_line()
         name_right = (uint8_t)(name_right - 6u);
         display::draw_icon(name_right, (uint8_t)(ALGO_Y - 1u), 5u, 8u, icon);
     };
-    if (m_status_badge) badge(ICON_NOTE);
-    if (m_scene_badge)  badge(ICON_SCENE_B);
-    display::draw_text_clipped(display::FONT_SMALL, 1, ALGO_Y, m_context_name,
+    if (m_state.status_badge) badge(ICON_NOTE);
+    if (m_state.scene_badge)  badge(ICON_SCENE_B);
+    display::draw_text_clipped(display::FONT_SMALL, 1, ALGO_Y, m_state.context_name,
                                (uint8_t)(name_right > 0u ? name_right - 1u : 0u));
 
     if (fn) {
-        display::draw_text(display::FONT_SMALL, (uint8_t)(split_x + 1u), ALGO_Y, m_function);
+        display::draw_text(display::FONT_SMALL, (uint8_t)(split_x + 1u), ALGO_Y, m_state.function);
     }
     // Page widget, left-aligned in its region with a 1px margin (only when >1 page).
     else if (multi) {
         char pg[PAGE_TEXT_BYTES];
         snprintf(pg, sizeof(pg), "Page %hu/%hu",
-                 (unsigned short)(m_page + 1u), (unsigned short)m_num_pages);
+                 (unsigned short)(m_state.page + 1u), (unsigned short)m_state.num_pages);
         display::draw_text(display::FONT_SMALL, (uint8_t)(split_x + 1u), ALGO_Y, pg);
     }
 
     // Selected widget: photo-negate its half of the row.
-    if (m_focus == Focus::Algo)
+    if (m_state.focus == Focus::Algo)
         display::invert_region(0, CTX_ROW_Y, split_x, CTX_ROW_H);
-    else if (m_focus == Focus::Pages && multi)
+    else if (m_state.focus == Focus::Pages && multi)
         display::invert_region(split_x, CTX_ROW_Y, (uint8_t)(OLED_WIDTH - split_x), CTX_ROW_H);
 }
 
@@ -279,23 +279,23 @@ void Compositor::draw_param_grid()
         const uint8_t w  = m_layout.col_w;
 
         char nm[16];
-        fit(display::FONT_TEXT, shorten_param_name(m_param_name[i]),
+        fit(display::FONT_TEXT, shorten_param_name(m_state.param_name[i]),
             (uint8_t)(w - 2u), nm, sizeof(nm));
         draw_centered(display::FONT_TEXT, x0, w, PNAME_Y, nm);
 
-        if (m_param_bar[i] != NO_BAR)
+        if (m_state.param_bar[i] != NO_BAR)
             display::draw_gauge((uint8_t)(x0 + 2u), GAUGE_Y, (uint8_t)(w - 4u),
-                                GAUGE_H, gauge_of(m_param_bar[i]));
+                                GAUGE_H, gauge_of(m_state.param_bar[i]));
 
         // A knob waiting to be picked up: a tick above the gauge marking where the pot
         // is pointing. The value stays where it is until the pot crosses it, so the gap
         // between tick and bar end is exactly how much further there is to turn.
-        if (m_param_pickup[i] != NO_BAR)
+        if (m_state.param_pickup[i] != NO_BAR)
             draw_pickup_tick((uint8_t)(x0 + 2u), (uint8_t)(w - 4u), PICKUP_Y,
-                             m_param_pickup[i]);
+                             m_state.param_pickup[i]);
 
         char val[16];
-        to_display(val, m_param_val[i], sizeof(val) - 1u, true);
+        to_display(val, m_state.param_val[i], sizeof(val) - 1u, true);
         if (val[0]) {
             if (display::text_width(display::FONT_TEXT, val) <= w - 2u) {
                 draw_centered(display::FONT_TEXT, x0, w, PVAL_Y, val);
@@ -320,7 +320,7 @@ void Compositor::draw_title_page_chip()
     const uint8_t x = (uint8_t)(OLED_WIDTH - w);
     char pg[PAGE_TEXT_BYTES];
     snprintf(pg, sizeof(pg), "Page %hu/%hu",
-             (unsigned short)(m_page + 1u), (unsigned short)m_num_pages);
+             (unsigned short)(m_state.page + 1u), (unsigned short)m_state.num_pages);
     display::draw_text(display::FONT_SMALL, (uint8_t)(x + 1u), 4u, pg);        // left-aligned in the box
     display::invert_region(x, TITLE_Y, w, (uint8_t)(TITLE_RULE_Y - TITLE_Y));  // highlight the chip
 }
@@ -344,8 +344,8 @@ void Compositor::draw_name_page()
 {
     draw_title("Edit Name");
 
-    char name_disp[sizeof(m_preset_name)];
-    strncpy(name_disp, m_preset_name, sizeof(name_disp));
+    char name_disp[sizeof(m_state.preset_name)];
+    strncpy(name_disp, m_state.preset_name, sizeof(name_disp));
     name_disp[sizeof(name_disp) - 1u] = '\0';
     const uint8_t nw = display::text_width(display::FONT_NAME, name_disp);
     const uint8_t nx = (nw < OLED_WIDTH) ? (uint8_t)((OLED_WIDTH - nw) / 2u) : 0u;
@@ -353,11 +353,11 @@ void Compositor::draw_name_page()
     const uint8_t ny = 28u;
     display::draw_text(display::FONT_NAME, nx, ny, name_disp);
 
-    char prefix[sizeof(m_preset_name)];
-    strncpy(prefix, name_disp, m_name_cursor);
-    prefix[m_name_cursor] = '\0';
+    char prefix[sizeof(m_state.preset_name)];
+    strncpy(prefix, name_disp, m_state.name_cursor);
+    prefix[m_state.name_cursor] = '\0';
     const uint8_t cx = (uint8_t)(nx + display::text_width(display::FONT_NAME, prefix));
-    const char cc[2] = { name_disp[m_name_cursor], '\0' };
+    const char cc[2] = { name_disp[m_state.name_cursor], '\0' };
     const uint8_t cw = display::text_width(display::FONT_NAME, cc);
     display::fill_rect(cx, ny, cw ? cw : 4u, display::FONT_NAME.height, true);
     display::draw_text_inv(display::FONT_NAME, cx, ny, cc);
@@ -372,8 +372,8 @@ void Compositor::draw_name_page()
 void Compositor::draw_normal(bool transient_owns_bottom_row)
 {
     display::clear();
-    if (m_screen != SCREEN_NORMAL) {
-        draw_screen(m_screen);
+    if (m_state.screen != SCREEN_NORMAL) {
+        draw_screen(m_state.screen);
         return;
     }
     draw_header(m_icon_now);
@@ -384,11 +384,11 @@ void Compositor::draw_normal(bool transient_owns_bottom_row)
     // transient banner or card owns this row; it returns once that clears. The two longest
     // names in the action vocabulary still fit side by side.
     if (!transient_owns_bottom_row) {
-        if (m_switch_label[0][0])
-            display::draw_text(display::FONT_SMALL, 0, HINT_Y, m_switch_label[0]);
-        if (m_switch_label[1][0])
+        if (m_state.switch_label[0][0])
+            display::draw_text(display::FONT_SMALL, 0, HINT_Y, m_state.switch_label[0]);
+        if (m_state.switch_label[1][0])
             display::draw_text_right(display::FONT_SMALL, OLED_WIDTH, HINT_Y,
-                                     m_switch_label[1]);
+                                     m_state.switch_label[1]);
     }
 }
 
@@ -503,12 +503,12 @@ void Compositor::draw_save()
 
 void Compositor::init()
 {
-    memset(m_param_name, 0, sizeof(m_param_name));
-    memset(m_param_val,  0, sizeof(m_param_val));
+    memset(m_state.param_name, 0, sizeof(m_state.param_name));
+    memset(m_state.param_val,  0, sizeof(m_state.param_val));
     for (uint8_t i = 0; i < MAX_COLS; ++i) {
-        snprintf(m_param_name[i], sizeof(m_param_name[i]), "P%d", i + 1);
-        snprintf(m_param_val[i],  sizeof(m_param_val[i]),  "--");
-        m_param_bar[i] = NO_BAR;
+        snprintf(m_state.param_name[i], sizeof(m_state.param_name[i]), "P%d", i + 1);
+        snprintf(m_state.param_val[i],  sizeof(m_state.param_val[i]),  "--");
+        m_state.param_bar[i] = NO_BAR;
     }
     m_pacer = FramePacer{};
     display::init();
@@ -604,31 +604,31 @@ void Compositor::apply(const ScreenState& s)
 
 void Compositor::set_context_name(const char* name)
 {
-    if (assign(m_context_name, sizeof(m_context_name), name)) m_pacer.changed();
+    if (assign(m_state.context_name, sizeof(m_state.context_name), name)) m_pacer.changed();
 }
 
 void Compositor::set_preset(uint16_t slot)
 {
-    if (m_preset != slot) { m_preset = slot; m_pacer.changed(); }
+    if (m_state.preset != slot) { m_state.preset = slot; m_pacer.changed(); }
 }
 
 void Compositor::set_preset_name(const char* name)
 {
-    if (assign(m_preset_name, sizeof(m_preset_name), name)) m_pacer.changed();
+    if (assign(m_state.preset_name, sizeof(m_state.preset_name), name)) m_pacer.changed();
 }
 
 void Compositor::set_status(bool badge_on)
 {
-    if (m_status_badge != badge_on) {
-        m_status_badge = badge_on;
+    if (m_state.status_badge != badge_on) {
+        m_state.status_badge = badge_on;
         m_pacer.changed();
     }
 }
 
 void Compositor::set_scene(bool badge_on)
 {
-    if (m_scene_badge != badge_on) {
-        m_scene_badge = badge_on;
+    if (m_state.scene_badge != badge_on) {
+        m_state.scene_badge = badge_on;
         m_pacer.changed();
     }
 }
@@ -638,17 +638,17 @@ void Compositor::set_param(uint8_t slot, const char* name, const char* value_str
     if (slot >= MAX_COLS) return;
     // A knob pushes its column every tick while it is being turned, so the redraw is
     // worth spending only when the label, the reading or the gauge actually moves.
-    bool moved = assign(m_param_name[slot], sizeof(m_param_name[slot]), name);
-    if (assign(m_param_val[slot], sizeof(m_param_val[slot]), value_str)) moved = true;
-    if (m_param_bar[slot] != bar) { m_param_bar[slot] = bar; moved = true; }
+    bool moved = assign(m_state.param_name[slot], sizeof(m_state.param_name[slot]), name);
+    if (assign(m_state.param_val[slot], sizeof(m_state.param_val[slot]), value_str)) moved = true;
+    if (m_state.param_bar[slot] != bar) { m_state.param_bar[slot] = bar; moved = true; }
     if (moved) m_pacer.changed();
 }
 
 void Compositor::set_param_pickup(uint8_t slot, uint16_t pot)
 {
     if (slot >= MAX_COLS) return;
-    if (m_param_pickup[slot] == pot) return;   // held every tick while armed; redraw once
-    m_param_pickup[slot] = pot;
+    if (m_state.param_pickup[slot] == pot) return;   // held every tick while armed; redraw once
+    m_state.param_pickup[slot] = pot;
     m_pacer.changed();
 }
 
@@ -657,51 +657,51 @@ void Compositor::set_switch_labels(const char* fs1, const char* fs2)
     const char* v[2] = { fs1, fs2 };
     bool moved = false;
     for (uint8_t i = 0; i < 2u; ++i)
-        if (assign(m_switch_label[i], sizeof(m_switch_label[i]), v[i])) moved = true;
+        if (assign(m_state.switch_label[i], sizeof(m_state.switch_label[i]), v[i])) moved = true;
     // Pushed every tick, so the redraw is worth spending only when the words move.
     if (moved) m_pacer.changed();
 }
 
 void Compositor::set_function_label(const char* label)
 {
-    if (assign(m_function, sizeof(m_function), label)) m_pacer.changed();
+    if (assign(m_state.function, sizeof(m_state.function), label)) m_pacer.changed();
 }
 
 void Compositor::set_page(uint8_t page, uint8_t num_pages)
 {
-    if (m_page == page && m_num_pages == num_pages) return;
-    m_page      = page;
-    m_num_pages = num_pages;
+    if (m_state.page == page && m_state.num_pages == num_pages) return;
+    m_state.page      = page;
+    m_state.num_pages = num_pages;
     m_pacer.changed();
 }
 
 void Compositor::set_focus(Focus f)
 {
-    if (m_focus != f) { m_focus = f; m_pacer.changed(); }
+    if (m_state.focus != f) { m_state.focus = f; m_pacer.changed(); }
 }
 
 void Compositor::set_save_prompt(bool show)
 {
-    if (m_save_prompt != show) { m_save_prompt = show; m_pacer.changed(); }
+    if (m_state.save_prompt != show) { m_state.save_prompt = show; m_pacer.changed(); }
 }
 
 void Compositor::set_screen(uint8_t screen_id)
 {
-    if (m_screen != screen_id) { m_screen = screen_id; m_pacer.changed(); }
+    if (m_state.screen != screen_id) { m_state.screen = screen_id; m_pacer.changed(); }
 }
 
 void Compositor::set_name_cursor(uint8_t cursor)
 {
     // The cursor names a character slot of the name, so it cannot leave it. The name holds
-    // sizeof(m_preset_name) - 1 characters and the byte after them is the terminator, so
+    // sizeof(m_state.preset_name) - 1 characters and the byte after them is the terminator, so
     // the last slot a cursor can sit on is two back from the end of the buffer.
     //
     // Clamped here rather than where it is drawn because this is the one place it is
     // written: apply() pushes the whole screen through the setters, so this covers a state
     // a product built by hand as well as a call it made directly.
-    constexpr uint8_t LAST_SLOT = (uint8_t)(sizeof(m_preset_name) - 2u);
+    constexpr uint8_t LAST_SLOT = (uint8_t)(sizeof(m_state.preset_name) - 2u);
     if (cursor > LAST_SLOT) cursor = LAST_SLOT;
-    if (m_name_cursor != cursor) { m_name_cursor = cursor; m_pacer.changed(); }
+    if (m_state.name_cursor != cursor) { m_state.name_cursor = cursor; m_pacer.changed(); }
 }
 
 void Compositor::show_message(const char* msg, MsgPos pos)
