@@ -160,7 +160,10 @@ inline constexpr uint8_t UNSET = 0x7Fu;
 
 namespace global_tag {
 inline constexpr uint8_t CHANNEL   = 0x10u;  // 0-15, or 16 for omni
-inline constexpr uint8_t NOISE     = 0x11u;  // <enabled> <threshold> <depth>
+// Noise reduction. Release is the optional tail, the same shape EXT_INPUT below uses for
+// its hold codes: a device that predates the control sends three bytes and a host that
+// does reads four. The record is length-prefixed, so growing it needs no version bump.
+inline constexpr uint8_t NOISE     = 0x11u;  // <enabled> <threshold> <depth> [<release>]
 // The jack's mode and what each of its three contacts does. Each contact carries a press
 // and a hold, and the three hold assignments are the optional tail: a device that predates
 // them sends four bytes, and a host that does reads seven. The record is length-prefixed,
@@ -710,7 +713,7 @@ struct GlobalRecord {
 
 inline constexpr GlobalRecord GLOBAL_RECORDS[] = {
     { global_tag::CHANNEL,      1u,                 1u                 },
-    { global_tag::NOISE,        3u,                 3u                 },
+    { global_tag::NOISE,        3u,                 4u                 },  // release is the tail
     { global_tag::EXT_INPUT,    4u,                 7u                 },  // the holds are the tail
     { global_tag::BYPASS,       1u,                 1u                 },
     { global_tag::MIDI_ROUTING, midi_routing::LEN,  midi_routing::LEN  },
