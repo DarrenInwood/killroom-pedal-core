@@ -89,13 +89,12 @@ b = board_config.load_board(pcbnew, board_path)
 # The one and only walk of the board's footprint container.
 fps = {fp.GetReference(): fp for fp in b.GetFootprints()}
 
-# --- 1. remove footprints the schematic no longer has ---------------------------------------------
-stale = sorted(r for r in fps if r not in comps and not r.startswith(KEEP_PREFIX))
-for r in stale:
-    b.Remove(fps.pop(r))
-print(f"removed {len(stale)} stale footprint(s): {' '.join(stale)}")
-
-# --- 2. add footprints the board does not have yet -------------------------------------------------
+# --- 1. add footprints the board does not have yet -------------------------------------------------
+# Every footprint is loaded before anything comes off the board. b.Remove() makes the next
+# pcbnew.FootprintLoad() return None for the rest of the process -- the same poisoning step 3 is
+# built around -- so a board that both gains and loses parts in one run can only load while it is
+# still whole. The two sets are disjoint, schematic-minus-board against board-minus-schematic, so
+# taking them in this order changes nothing else.
 gx, gy, col = 55.0, 55.0, 0
 added = []
 for ref in sorted(set(comps) - set(fps)):
@@ -112,7 +111,7 @@ for ref in sorted(set(comps) - set(fps)):
     added.append(f"{ref}({fpid.split(':')[1]})")
 print(f"added {len(added)} footprint(s): {' '.join(added)}")
 
-# --- 3. replace footprints whose package no longer matches the schematic ---------------------------
+# --- 2. replace footprints whose package no longer matches the schematic ---------------------------
 # Refdes get reused. U101 was the buck (SOT-583-8) and came back as an SGM2210 (SOT-23-5); U102/U103
 # were MIC29302s in TO-263-5. The board kept the old 8- and 10-pad packages under the new refdes, and
 # a pad-net check cannot see it -- the surplus pads simply carry no net, which looks exactly like an
@@ -148,29 +147,40 @@ for ref in sorted(r for r in fps if r in comps):
     fps[ref] = new
 print(f"replaced {len(swapped)} footprint(s)" + ("\n    " + "\n    ".join(swapped) if swapped else ""))
 
+# --- 3. remove footprints the schematic no longer has ----------------------------------------------
+# A pass that has already swapped leaves these to the next one. Dropping a stale part is another
+# b.Remove(), and the swap above has spent this process's one allowance: the pads and nets below
+# would be reading a poisoned container, and a later pass's load() would come back None.
+stale = sorted(r for r in fps if r not in comps and not r.startswith(KEEP_PREFIX)) if not swapped else []
+for r in stale:
+    b.Remove(fps.pop(r))
+print(f"removed {len(stale)} stale footprint(s): {' '.join(stale)}")
+
 # b.Remove() POISONS THE FOOTPRINT CONTAINER FOR THE REST OF THE PROCESS. Not just the handle that
 # was removed -- every handle taken before it, and every handle taken after it: a fresh
 # b.GetFootprints() then yields bare SwigPyObjects with no methods on them at all, so the next
 # fp.Pads() or fp.GetReference() dies. Re-snapshotting does not help; nor does reloading the board,
 # which segfaults while Python still holds footprints from the old one.
 #
-# So a swap ends this process. Save what we have, then re-run ourselves on a clean load to do the
-# nets. The second pass finds the packages already correct and swaps nothing.
+# So any Remove ends this process -- a package swap or a stale drop alike. Save what we have, then
+# re-run ourselves on a clean load to do the nets. The last pass finds the packages already correct,
+# has nothing left to drop, and reaches the values and the pads on handles nothing has poisoned.
 #
 # Each pass does one swap and hands the rest to the next, so a board with N package changes costs
-# N+1 passes. `pass` is bounded: without it a footprint that swaps but still compares unequal would
-# re-run for ever, and the board has 104 refs it could do that with.
+# N+1 passes, plus one more if it also has stale parts to drop. `pass` is bounded: without it a
+# footprint that swaps but still compares unequal would re-run for ever, and the board has 104 refs
+# it could do that with.
 PASS_LIMIT = 40
 depth = next((int(a.split("=")[1]) for a in sys.argv if a.startswith("--pass=")), 0)
-if swapped:
+if swapped or stale:
     if depth >= PASS_LIMIT:
-        sys.exit(f"still swapping packages after {depth} passes -- {swapped[0]} is not settling")
+        sys.exit(f"still settling after {depth} passes -- {(swapped or stale)[0]} is not settling")
     pcbnew.SaveBoard(board_path, b)
-    print(f"saved the package swap; re-running on a clean load ({depth + 1})")
+    print(f"saved the footprint changes; re-running on a clean load ({depth + 1})")
     # argv[0], NOT __file__: this file lives in a submodule, and re-execing it
     # directly would run the library copy with none of the product shim's path
-    # setup. It only fires on a board that needs a package swap, so a smoke test
-    # that swaps nothing would never notice.
+    # setup. It only fires on a board whose footprints changed, so a smoke test
+    # that changes none would never notice.
     r = subprocess.run([sys.executable, os.path.abspath(sys.argv[0]),
                         board_path, net_path, proj_dir, f"--pass={depth + 1}"])
     sys.exit(r.returncode)
