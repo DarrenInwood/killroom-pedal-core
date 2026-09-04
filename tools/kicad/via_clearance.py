@@ -15,6 +15,7 @@ The board states the numbers it needs in `board_config.json`:
 
 A board that says nothing keeps the flat floor, so this changes no other product's output.
 """
+import math
 
 FLOOR = 0.25
 
@@ -49,3 +50,19 @@ def clear_for(item, cache):
         except AttributeError:
             cache[code] = ""
     return max(FLOOR, _by_class.get(cache[code], 0.0))
+
+def disc_chain(ax, ay, cx, cy, r, step=0.5):
+    """A track segment as overlapping discs of radius `r`, for a point-in-circle test.
+
+    Discs spaced along a segment leave a SAG between neighbours: midway between two, the union
+    reaches only sqrt(r^2 - (s/2)^2), not r. A via landing there clears the check and fails DRC,
+    which is what left one 0.344mm violation against a 0.35mm rule -- 0.045mm of sag at the
+    spacing this uses. Growing each disc to sqrt(r^2 + (s/2)^2) makes the union cover the whole
+    swept band: the midpoint then reaches exactly r. It costs no extra discs, and it is never
+    permissive -- at a sample point it is over-strict by that same 0.045mm, which is the safe
+    direction for a tool deciding where to drop copper.
+    """
+    seg = math.hypot(cx - ax, cy - ay)
+    n = max(1, int(seg / step))
+    rr = math.sqrt(r * r + (seg / n / 2.0) ** 2)
+    return [(ax + (cx - ax) * i / n, ay + (cy - ay) * i / n, rr) for i in range(n + 1)]

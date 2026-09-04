@@ -110,11 +110,8 @@ def obstacles(b, own_net, half, own_pads_block):
                           MM(t.GetWidth(t.GetLayer())) / 2.0 + margin))
         else:
             a, c = t.GetStart(), t.GetEnd()
-            ax, ay, cx, cy = MM(a.x), MM(a.y), MM(c.x), MM(c.y)
-            r = MM(t.GetWidth()) / 2.0 + margin
-            n = max(1, int(math.hypot(cx - ax, cy - ay) / 0.5))
-            for i in range(n + 1):
-                discs.append((ax + (cx - ax) * i / n, ay + (cy - ay) * i / n, r))
+            discs.extend(via_clearance.disc_chain(MM(a.x), MM(a.y), MM(c.x), MM(c.y),
+                                                  MM(t.GetWidth()) / 2.0 + margin))
     return rects, discs
 
 

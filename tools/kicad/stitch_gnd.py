@@ -82,11 +82,8 @@ def keepouts(b, gnd_code):
             discs.append((MM(q.x), MM(q.y), MM(t.GetWidth(t.GetLayer())) / 2.0 + m))
         else:
             a, c = t.GetStart(), t.GetEnd()
-            ax, ay, cx, cy = MM(a.x), MM(a.y), MM(c.x), MM(c.y)
-            r = MM(t.GetWidth()) / 2.0 + m
-            n = max(1, int(math.hypot(cx - ax, cy - ay) / 0.5))
-            for i in range(n + 1):
-                discs.append((ax + (cx - ax) * i / n, ay + (cy - ay) * i / n, r))
+            discs.extend(via_clearance.disc_chain(MM(a.x), MM(a.y), MM(c.x), MM(c.y),
+                                                  MM(t.GetWidth()) / 2.0 + m))
     return rects, discs
 
 

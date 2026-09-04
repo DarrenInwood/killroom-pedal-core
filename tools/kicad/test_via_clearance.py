@@ -81,9 +81,33 @@ def main():
     via_clearance.load(Cfg({"stitch_clearance": {"Clock": 0.4}}))
     eq(via_clearance.clear_for(Item(8, "HiZ_Audio", n), {}), 0.25, "stale map after a reload")
 
+    # 7. disc_chain covers the whole swept band -- no sag a via can hide in
+    import math
+    for (ax, ay, cx, cy, r) in ((0.0, 0.0, 23.0, 0.0, 0.75),
+                                (0.0, 0.0, 0.31, 0.0, 0.4),      # shorter than one step
+                                (1.0, 2.0, 4.0, 6.0, 0.55),      # diagonal
+                                (5.0, 5.0, 5.0, 5.0, 0.6)):      # zero length
+        chain = via_clearance.disc_chain(ax, ay, cx, cy, r)
+        seg = math.hypot(cx - ax, cy - ay)
+        worst = 0.0
+        for i in range(2001):                       # walk the band edge, densely
+            t = i / 2000.0
+            px, py = ax + (cx - ax) * t, ay + (cy - ay) * t
+            # a point exactly r away, on the segment's normal (any direction, if zero-length)
+            nx, ny = (-(cy - ay) / seg, (cx - ax) / seg) if seg else (1.0, 0.0)
+            qx, qy = px + nx * r * 0.999, py + ny * r * 0.999
+            if not any((qx - dx) ** 2 + (qy - dy) ** 2 < dr * dr for dx, dy, dr in chain):
+                fails.append("disc_chain leaves a gap at t=%.3f on a %.2fmm segment" % (t, seg))
+                break
+        # and it must not be wildly over-strict either
+        for dx, dy, dr in chain:
+            worst = max(worst, dr - r)
+        if worst > 0.06:
+            fails.append("disc_chain over-inflates by %.4fmm on a %.2fmm segment" % (worst, seg))
+
     for f in fails:
         print("FAIL", f)
-    print("%s -- %d check(s)" % ("FAIL" if fails else "ok", 9))
+    print("%s -- %d check(s)" % ("FAIL" if fails else "ok", 13))
     return 1 if fails else 0
 
 
