@@ -73,7 +73,12 @@ inline constexpr uint8_t SET_SCENE_ACTIVE = 0x15u;
 inline constexpr uint8_t SET_CHANNEL      = 0x20u;
 inline constexpr uint8_t FETCH_GLOBAL     = 0x21u;
 inline constexpr uint8_t GLOBAL_DATA      = 0x22u;
-inline constexpr uint8_t SET_NOISE        = 0x23u;
+// 0x23 was SET_NOISE, the modulator's noise-gate settings. Its gate is gone with the
+// compander that replaced it, and the distortion's gate was always a pair of preset
+// parameters rather than a device setting, so nothing in the family sends it. The id stays
+// spent: a fielded pedal running older firmware still answers it, and reusing the number
+// would make that pedal act on a command meant for something else.
+inline constexpr uint8_t RETIRED_SET_NOISE = 0x23u;
 inline constexpr uint8_t SET_EXT_INPUT    = 0x24u;
 inline constexpr uint8_t SET_SYNC         = 0x25u;
 inline constexpr uint8_t SET_MIDI         = 0x26u;  // the whole routing block; see midi_routing
@@ -101,7 +106,11 @@ inline constexpr uint8_t UID_DATA         = 0x73u;
 namespace cap {
 inline constexpr uint16_t EXPRESSION     = 1u << 0;  // expression CCs and the preset's EXPR tag
 inline constexpr uint16_t TEMPO          = 1u << 1;  // SET_BPM, SET_SYNC and the preset's TEMPO tag
-inline constexpr uint16_t NOISE_GLOBAL   = 1u << 2;  // noise reduction is a global, not a preset parameter
+// Bit 2 said "noise reduction is a device-wide setting here, not a preset parameter". No
+// product claims it: the modulator's gate is gone and the distortion's was always per-preset.
+// The bit stays reserved rather than reused -- a fielded pedal still sets it, and a new
+// feature on the same bit would read as that feature being present.
+inline constexpr uint16_t RETIRED_NOISE_GLOBAL = 1u << 2;
 inline constexpr uint16_t EXT_INPUT      = 1u << 3;
 inline constexpr uint16_t BYPASS_FLAG    = 1u << 4;  // presets carry a bypassed-on-recall flag
 inline constexpr uint16_t CALIBRATION    = 1u << 5;
@@ -160,10 +169,12 @@ inline constexpr uint8_t UNSET = 0x7Fu;
 
 namespace global_tag {
 inline constexpr uint8_t CHANNEL   = 0x10u;  // 0-15, or 16 for omni
-// Noise reduction. Release is the optional tail, the same shape EXT_INPUT below uses for
-// its hold codes: a device that predates the control sends three bytes and a host that
-// does reads four. The record is length-prefixed, so growing it needs no version bump.
-inline constexpr uint8_t NOISE     = 0x11u;  // <enabled> <threshold> <depth> [<release>]
+// 0x11 carried the modulator's noise-gate settings. Nothing writes it now, and nothing
+// reads it: the record's struct and both codec branches are gone. The TAG stays, because
+// these ids are one unbroken run that GLOBAL_RECORDS is asserted against -- closing the gap
+// would renumber every tag above it and change the meaning of a frame already in the field.
+// A reader skips it by its length, which is what the length prefix is for.
+inline constexpr uint8_t RETIRED_NOISE = 0x11u;
 // The jack's mode and what each of its three contacts does. Each contact carries a press
 // and a hold, and the three hold assignments are the optional tail: a device that predates
 // them sends four bytes, and a host that does reads seven. The record is length-prefixed,
@@ -679,12 +690,6 @@ inline bool parse_preset(const uint8_t* f, uint16_t len, uint8_t device, PresetV
 // zero — it is a question the pedal was not asked, and applying it as a value would turn
 // a capability the product lacks into a setting it appears to have turned off.
 
-struct NoiseSettings {
-    bool    enabled   = false;
-    uint8_t threshold = 0u;
-    uint8_t depth     = 0u;
-};
-
 // The jack's mode, and the action each of its three contacts carries. The hold
 // assignments are the optional tail: a device that predates them sends four bytes.
 struct ExtInputSettings {
@@ -713,7 +718,7 @@ struct GlobalRecord {
 
 inline constexpr GlobalRecord GLOBAL_RECORDS[] = {
     { global_tag::CHANNEL,      1u,                 1u                 },
-    { global_tag::NOISE,        3u,                 4u                 },  // release is the tail
+    { global_tag::RETIRED_NOISE, 3u,                4u                 },  // spent; holds the run
     { global_tag::EXT_INPUT,    4u,                 7u                 },  // the holds are the tail
     { global_tag::BYPASS,       1u,                 1u                 },
     { global_tag::MIDI_ROUTING, midi_routing::LEN,  midi_routing::LEN  },
@@ -753,7 +758,6 @@ inline constexpr uint8_t global_min_len(uint8_t tag)
 
 struct GlobalView {
     uint8_t                    channel       = 0u;     // 0-15, or MIDI_CHANNEL_OMNI
-    NoiseSettings              noise{};
     ExtInputSettings           ext_input{};
     bool                       bypass_active = true;
     midi_routing::RoutingBlock routing{};
@@ -761,7 +765,6 @@ struct GlobalView {
     uint8_t                    knob_mode     = 0u;     // 0 pickup, 1 jump
 
     bool has_channel      = false;
-    bool has_noise        = false;
     bool has_ext_input    = false;
     bool has_bypass       = false;
     bool has_routing      = false;
@@ -791,11 +794,6 @@ inline uint16_t build_global(const GlobalView& g, uint8_t device, uint8_t* out, 
     if (g.has_channel) {
         const uint8_t v = g.channel;
         w.tlv(global_tag::CHANNEL, &v, 1u);
-    }
-    if (g.has_noise) {
-        const uint8_t v[3] = { (uint8_t)(g.noise.enabled ? 1u : 0u),
-                               g.noise.threshold, g.noise.depth };
-        w.tlv(global_tag::NOISE, v, 3u);
     }
     if (g.has_ext_input) {
         const uint8_t v[7] = { g.ext_input.mode,
@@ -851,12 +849,6 @@ inline bool parse_global(const uint8_t* f, uint16_t len, uint8_t device, GlobalV
             case global_tag::CHANNEL:
                 out.channel     = t.value[0];
                 out.has_channel = true;
-                break;
-            case global_tag::NOISE:
-                out.noise.enabled   = (t.value[0] != 0u);
-                out.noise.threshold = t.value[1];
-                out.noise.depth     = t.value[2];
-                out.has_noise       = true;
                 break;
             case global_tag::EXT_INPUT:
                 out.ext_input.mode     = t.value[0];
