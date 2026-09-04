@@ -56,6 +56,8 @@ import sys
 import pcbnew
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import board_config                                          # noqa: E402
+import via_clearance                                         # noqa: E402
 from check_stranded_pours import (analyse, findings_from,     # noqa: E402
                                   in_anchor_copper)
 
@@ -64,14 +66,19 @@ FM = pcbnew.FromMM
 
 VIA_D, VIA_H = 0.6, 0.3
 TRACK = 0.3
-CLEAR = 0.25
+CLEAR = via_clearance.FLOOR   # floor; a netclass may ask for more
 STEP = 0.2            # mm, how far out to step the search each round
 ROUNDS = 20           # so the search reaches ~4mm from the pad
 ANGLES = 24
 
 
-def obstacles(b, own_net, margin, own_pads_block):
-    """Everything a new feature must stay off, inflated by `margin`.
+def obstacles(b, own_net, half, own_pads_block):
+    """Everything a new feature must stay off, inflated by `half` plus its own clearance.
+
+    `half` is the half-width of the thing being placed; each obstacle is then inflated by the
+    clearance ITS netclass asks for, which is the floor for most nets and more for the few a
+    board names in board_config. One flat margin for the whole board is what put rescue vias
+    0.25mm from HiZ_Audio tracks that wanted 0.35mm, every route.
 
     Copper of `own_net` is never an obstacle -- landing on it is the point. Pads are
     a different question depending on what is being placed, hence own_pads_block:
@@ -84,27 +91,27 @@ def obstacles(b, own_net, margin, own_pads_block):
       obstacles or nothing would ever be placeable.
     """
     rects, discs = [], []
+    cache = {}
     for fp in b.GetFootprints():
         for pad in fp.Pads():
             if not own_pads_block and pad.GetNetCode() == own_net:
                 continue
+            margin = half + via_clearance.clear_for(pad, cache)
             bb = pad.GetBoundingBox()
             rects.append((MM(bb.GetLeft()) - margin, MM(bb.GetTop()) - margin,
                           MM(bb.GetRight()) + margin, MM(bb.GetBottom()) + margin))
     for t in b.GetTracks():
         if t.GetNetCode() == own_net:
             continue
+        margin = half + via_clearance.clear_for(t, cache)
         if t.Type() == pcbnew.PCB_VIA_T:
             q = t.GetPosition()
             discs.append((MM(q.x), MM(q.y),
                           MM(t.GetWidth(t.GetLayer())) / 2.0 + margin))
         else:
             a, c = t.GetStart(), t.GetEnd()
-            ax, ay, cx, cy = MM(a.x), MM(a.y), MM(c.x), MM(c.y)
-            r = MM(t.GetWidth()) / 2.0 + margin
-            n = max(1, int(math.hypot(cx - ax, cy - ay) / 0.5))
-            for i in range(n + 1):
-                discs.append((ax + (cx - ax) * i / n, ay + (cy - ay) * i / n, r))
+            discs.extend(via_clearance.disc_chain(MM(a.x), MM(a.y), MM(c.x), MM(c.y),
+                                                  MM(t.GetWidth()) / 2.0 + margin))
     return rects, discs
 
 
@@ -185,6 +192,10 @@ def find_spot(an, net, px, py, reach, ko, vias):
 
 def main():
     path = sys.argv[1]
+    try:
+        via_clearance.load(board_config.load().board_for_path(path))
+    except Exception:
+        pass          # no config, or a board it does not know: keep the flat floor
     b = pcbnew.LoadBoard(path)
 
     # One analysis of the board we are about to modify, so the islands and the
@@ -214,8 +225,8 @@ def main():
             continue
         nc = net.GetNetCode()
         if nc not in ko_cache:
-            ko_cache[nc] = (obstacles(b, nc, VIA_D / 2.0 + CLEAR, True),
-                            obstacles(b, nc, TRACK / 2.0 + CLEAR, False))
+            ko_cache[nc] = (obstacles(b, nc, VIA_D / 2.0, True),
+                            obstacles(b, nc, TRACK / 2.0, False))
         ko = ko_cache[nc]
 
         fp = b.FindFootprintByReference(f["ref"])
