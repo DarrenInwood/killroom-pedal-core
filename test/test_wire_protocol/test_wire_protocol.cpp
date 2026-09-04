@@ -124,7 +124,7 @@ void test_device_info_carries_a_slot_count_past_128(void) {
 // Every bit, not most of them: the ones most likely to collide are the ones appended last,
 // and those were the five this list used to stop short of.
 void test_device_info_capability_bits_are_distinct(void) {
-    const uint16_t bits[] = { cap::EXPRESSION, cap::TEMPO, cap::NOISE_GLOBAL,
+    const uint16_t bits[] = { cap::EXPRESSION, cap::TEMPO, cap::RETIRED_NOISE_GLOBAL,
                               cap::EXT_INPUT, cap::BYPASS_FLAG, cap::CALIBRATION,
                               cap::FACTORY_BANK, cap::UID, cap::SAVE_ADDRESSED,
                               cap::BOOST, cap::MIDI_ROUTING, cap::PRESET_EXTRAS,
@@ -151,9 +151,9 @@ void test_tlv_round_trips(void) {
     uint8_t buf[32] = {};
     Writer w(buf, sizeof(buf));
     const uint8_t channel[1] = { MIDI_CHANNEL_OMNI };
-    const uint8_t noise[3]   = { 1u, 24u, 64u };
+    const uint8_t ext[4]     = { 1u, 24u, 64u, 3u };
     w.tlv(global_tag::CHANNEL, channel, sizeof(channel));
-    w.tlv(global_tag::NOISE, noise, sizeof(noise));
+    w.tlv(global_tag::EXT_INPUT, ext, sizeof(ext));
 
     TlvReader r(buf, w.length());
     Tlv t{};
@@ -163,8 +163,8 @@ void test_tlv_round_trips(void) {
     TEST_ASSERT_EQUAL_UINT8(MIDI_CHANNEL_OMNI, t.value[0]);
 
     TEST_ASSERT_TRUE(r.next(t));
-    TEST_ASSERT_EQUAL_HEX8(global_tag::NOISE, t.tag);
-    TEST_ASSERT_EQUAL_UINT8(3, t.len);
+    TEST_ASSERT_EQUAL_HEX8(global_tag::EXT_INPUT, t.tag);
+    TEST_ASSERT_EQUAL_UINT8(4, t.len);
     TEST_ASSERT_EQUAL_UINT8(24u, t.value[1]);
 
     TEST_ASSERT_FALSE(r.next(t));
@@ -205,12 +205,12 @@ void test_tlv_find_restarts_so_order_does_not_matter(void) {
 void test_tlv_stops_at_a_truncated_record(void) {
     // A short tail is what a dropped packet looks like. The records already
     // read stay good; the missing one simply never turns up.
-    uint8_t buf[8] = { global_tag::CHANNEL, 1u, 5u, global_tag::NOISE, 3u, 1u };
+    uint8_t buf[8] = { global_tag::CHANNEL, 1u, 5u, global_tag::EXT_INPUT, 4u, 1u };
     TlvReader r(buf, 6u);
     Tlv t{};
     TEST_ASSERT_TRUE(r.next(t));
     TEST_ASSERT_EQUAL_HEX8(global_tag::CHANNEL, t.tag);
-    TEST_ASSERT_FALSE(r.next(t));   // NOISE claims 3 bytes and only 1 is present
+    TEST_ASSERT_FALSE(r.next(t));   // EXT_INPUT claims 4 bytes and only 1 is present
 }
 
 void test_tlv_absent_tag_is_not_found(void) {
@@ -630,9 +630,6 @@ void test_uid_rejects_a_truncated_payload(void) {
 static GlobalView sample_global(void) {
     GlobalView g{};
     g.channel = 9u;                     g.has_channel = true;
-    g.noise.enabled = true;
-    g.noise.threshold = 40u;
-    g.noise.depth = 77u;                g.has_noise = true;
     g.ext_input.mode = 1u;
     g.ext_input.press[0] = 4u; g.ext_input.press[1] = 3u; g.ext_input.press[2] = 2u;
     g.ext_input.hold[0]  = 8u; g.ext_input.hold[1]  = 13u; g.ext_input.hold[2] = 11u;
@@ -667,10 +664,6 @@ void test_global_round_trips(void) {
     TEST_ASSERT_TRUE(parse_global(buf, n, 0x01u, got));
 
     TEST_ASSERT_TRUE(got.has_channel);      TEST_ASSERT_EQUAL_UINT8(9u, got.channel);
-    TEST_ASSERT_TRUE(got.has_noise);
-    TEST_ASSERT_TRUE(got.noise.enabled);
-    TEST_ASSERT_EQUAL_UINT8(40u, got.noise.threshold);
-    TEST_ASSERT_EQUAL_UINT8(77u, got.noise.depth);
     TEST_ASSERT_TRUE(got.has_ext_input);
     TEST_ASSERT_EQUAL_UINT8(1u, got.ext_input.mode);
     TEST_ASSERT_EQUAL_UINT8(4u, got.ext_input.press[0]);
@@ -766,7 +759,6 @@ void test_global_omits_the_fields_a_product_does_not_have(void) {
     GlobalView got{};
     TEST_ASSERT_TRUE(parse_global(buf, n, 0x01u, got));
     TEST_ASSERT_TRUE(got.has_channel);
-    TEST_ASSERT_FALSE(got.has_noise);
     TEST_ASSERT_FALSE(got.has_ext_input);
     TEST_ASSERT_FALSE(got.has_bypass);
     TEST_ASSERT_FALSE(got.has_routing);
@@ -828,13 +820,32 @@ void test_global_leaves_a_short_record_absent(void) {
     uint8_t buf[GLOBAL_FRAME_MAX] = {};
     Writer w(buf, sizeof(buf));
     w.header(0x01u, cmd::GLOBAL_DATA);
-    const uint8_t half[2] = { 1u, 40u };        // NOISE wants three
-    w.tlv(global_tag::NOISE, half, 2u);
+    const uint8_t half[3] = { 1u, 40u, 2u };    // EXT_INPUT wants four
+    w.tlv(global_tag::EXT_INPUT, half, 3u);
     w.end();
 
     GlobalView got{};
     TEST_ASSERT_TRUE(parse_global(buf, w.length(), 0x01u, got));
-    TEST_ASSERT_FALSE(got.has_noise);
+    TEST_ASSERT_FALSE(got.has_ext_input);
+}
+
+// A retired tag is skipped by its length, not choked on. A pedal running firmware that
+// predates the retirement still sends 0x11, and everything after it in the same frame has
+// to survive that.
+void test_global_skips_a_retired_record(void) {
+    uint8_t buf[GLOBAL_FRAME_MAX] = {};
+    Writer w(buf, sizeof(buf));
+    w.header(0x01u, cmd::GLOBAL_DATA);
+    const uint8_t stale[3] = { 1u, 40u, 77u };
+    w.tlv(global_tag::RETIRED_NOISE, stale, 3u);
+    const uint8_t channel[1] = { 7u };
+    w.tlv(global_tag::CHANNEL, channel, 1u);
+    w.end();
+
+    GlobalView got{};
+    TEST_ASSERT_TRUE(parse_global(buf, w.length(), 0x01u, got));
+    TEST_ASSERT_TRUE(got.has_channel);          // the record behind it still arrived
+    TEST_ASSERT_EQUAL_UINT8(7u, got.channel);
 }
 
 void test_global_rejects_another_product(void) {
@@ -975,6 +986,7 @@ int main(int, char**)
     RUN_TEST(test_global_with_no_records_is_valid);
     RUN_TEST(test_global_skips_a_tag_it_does_not_know);
     RUN_TEST(test_global_leaves_a_short_record_absent);
+    RUN_TEST(test_global_skips_a_retired_record);
     RUN_TEST(test_global_rejects_another_product);
     RUN_TEST(test_global_rejects_an_unrelated_command);
     RUN_TEST(test_global_refuses_a_short_buffer);
