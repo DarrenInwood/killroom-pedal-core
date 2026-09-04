@@ -13,6 +13,7 @@ of any one board.
 | [fab_audit.py](fab_audit.py) | Audits a finished package: zip freshness, outline size, empty copper layers, drill limits, BOM/CPL agreement, CPL positions against the board |
 | [jlcpcb.py](jlcpcb.py) | The vendor's own figures — thresholds, the LCSC rotation table, the centroid exceptions |
 | [board_config.py](board_config.py) | Reads a product's `kicad/board_config.json` |
+| [via_clearance.py](via_clearance.py) | How much room a via laid *after* routing leaves around other copper, per netclass |
 | [kicad_env.py](kicad_env.py) | Finds KiCad on this machine |
 
 ## The three-way split
@@ -60,6 +61,12 @@ ignored, which is where the reason for a value goes:
       "bom_jlcpcb": "fab/main-bom-jlcpcb.csv",
       "cpl_jlcpcb": "fab/main-cpl-jlcpcb.csv",
       "layers": 4, "smd_side": "F", "max_size": [100.0, 100.0],
+      "_stitch_clearance": "protect_hiz_nodes wants 0.35mm around the CV nodes and
+                            clock_away_from_audio 0.4mm around the clocks. Both are KiCad
+                            custom rules, which the SWIG API cannot read, so the numbers
+                            are repeated here for the tools that place copper after the
+                            router has finished.",
+      "stitch_clearance": { "HiZ_Audio": 0.35, "Clock": 0.4 },
       "hand_solder": [], "global_source": [], "mixed_smd": [], "rotate_270": []
     }
   }

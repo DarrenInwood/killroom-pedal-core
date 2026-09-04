@@ -46,6 +46,7 @@ import pcbnew
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import board_config
+import via_clearance
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check_stranded_pours import (check, collect_islands,   # noqa: E402
@@ -55,17 +56,19 @@ MM = pcbnew.ToMM
 FM = pcbnew.FromMM
 
 VIA_D, VIA_H = 0.6, 0.3
-CLEAR = 0.25          # to any other copper
+CLEAR = via_clearance.FLOOR    # floor; a netclass may ask for more, see via_clearance
 PITCH = 6.0           # mm, stitching grid
 EDGE = 1.0            # mm from the board outline
+
 
 
 def keepouts(b, gnd_code):
     """Everything a stitching via must stay off: every pad, and every track that is not GND."""
     rects, discs = [], []
-    m = VIA_D / 2.0 + CLEAR
+    cache = {}
     for fp in b.GetFootprints():
         for pad in fp.Pads():
+            m = VIA_D / 2.0 + via_clearance.clear_for(pad, cache)
             bb = pad.GetBoundingBox()
             # ANY pad, GND or not: a via inside a mask opening is the paid process
             rects.append((MM(bb.GetLeft()) - m, MM(bb.GetTop()) - m,
@@ -73,6 +76,7 @@ def keepouts(b, gnd_code):
     for t in b.GetTracks():
         if t.GetNetCode() == gnd_code:
             continue
+        m = VIA_D / 2.0 + via_clearance.clear_for(t, cache)
         if t.Type() == pcbnew.PCB_VIA_T:
             q = t.GetPosition()
             discs.append((MM(q.x), MM(q.y), MM(t.GetWidth(t.GetLayer())) / 2.0 + m))
@@ -195,6 +199,7 @@ def main():
         _b = board_config.load().board_for_path(path)
         REACH_LAYERS = tuple(_LAYER_IDS[n] for n in (_b.get("stitch_reach_layers") or ())
                              if n in _LAYER_IDS)
+        via_clearance.load(_b)
     except Exception:
         REACH_LAYERS = ()
     pitch = float(sys.argv[2]) if len(sys.argv) > 2 else PITCH
